@@ -1,0 +1,5 @@
+PyQt6
+python-escpos
+qrcode
+reportlab
+pyinstaller
