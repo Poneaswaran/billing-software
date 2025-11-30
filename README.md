@@ -10,7 +10,7 @@ A robust, easy-to-use Point of Sale (POS) and billing application built with Pyt
     *   Quick product search and addition to cart.
     *   Barcode scanner support for rapid checkout.
     *   Automatic tax and discount calculations.
-    *   Multiple payment modes (Cash, UPI, Card, etc.).
+    *   Multiple payment modes (Cash, UPI, Card, Debt.).
 *   **📦 Product Management**:
     *   Add, edit, and delete products easily.
     *   Manage inventory and stock levels.

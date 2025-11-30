@@ -268,9 +268,20 @@ class MainWindow(QMainWindow):
         sidebar_layout.addLayout(self.quick_grid)
 
         # Recent Bills
+        recent_header_layout = QHBoxLayout()
         lbl_recent = QLabel("🕒 Recent Bills")
         lbl_recent.setObjectName("sectionHeader")
-        sidebar_layout.addWidget(lbl_recent)
+        
+        btn_clear_history = QPushButton("Clear")
+        btn_clear_history.setFixedWidth(60)
+        btn_clear_history.setToolTip("Clear All Bill History")
+        btn_clear_history.clicked.connect(self.clear_bill_history)
+        
+        recent_header_layout.addWidget(lbl_recent)
+        recent_header_layout.addStretch()
+        recent_header_layout.addWidget(btn_clear_history)
+        
+        sidebar_layout.addLayout(recent_header_layout)
         
         self.recent_list = QListWidget()
         sidebar_layout.addWidget(self.recent_list)
@@ -506,6 +517,15 @@ class MainWindow(QMainWindow):
             from app.ui_styles import get_theme_style
             theme = SettingsModel.get_setting('theme', 'Light')
             QApplication.instance().setStyleSheet(get_theme_style(theme))
+
+    def clear_bill_history(self):
+        reply = QMessageBox.question(self, "Confirm Delete", 
+                                   "Are you sure you want to delete ALL bill history? This cannot be undone.",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            BillModel.delete_all_bills()
+            self.load_recent_bills()
+            show_info(self, "Success", "All bill history cleared.")
 
     def open_reports(self):
         ReportsDialog(self).exec()

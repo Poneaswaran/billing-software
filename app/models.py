@@ -1,142 +1,179 @@
-from app.db import get_db_connection
+from app.db import get_db
+from app.orm_models import Product, Customer, Bill, BillItem, Setting
+from sqlalchemy import or_
 from datetime import datetime
-import json
 
 class ProductModel:
     @staticmethod
     def add_product(name, code, base_unit, price, category="General"):
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        session = get_db()
         try:
-            cursor.execute('INSERT INTO products (name, code, base_unit, price_per_unit, category) VALUES (?, ?, ?, ?, ?)',
-                           (name, code, base_unit, price, category))
-            conn.commit()
-            return cursor.lastrowid
+            product = Product(name=name, code=code, base_unit=base_unit, price_per_unit=price, category=category)
+            session.add(product)
+            session.commit()
+            return product.id
         finally:
-            conn.close()
+            session.close()
 
     @staticmethod
     def get_all_products():
-        conn = get_db_connection()
-        products = conn.execute('SELECT * FROM products').fetchall()
-        conn.close()
-        return [dict(p) for p in products]
+        session = get_db()
+        try:
+            products = session.query(Product).all()
+            return [p.to_dict() for p in products]
+        finally:
+            session.close()
 
     @staticmethod
     def search_products(query):
-        conn = get_db_connection()
-        products = conn.execute('SELECT * FROM products WHERE name LIKE ? OR code LIKE ?', 
-                                (f'%{query}%', f'%{query}%')).fetchall()
-        conn.close()
-        return [dict(p) for p in products]
+        session = get_db()
+        try:
+            products = session.query(Product).filter(
+                or_(Product.name.like(f'%{query}%'), Product.code.like(f'%{query}%'))
+            ).all()
+            return [p.to_dict() for p in products]
+        finally:
+            session.close()
 
     @staticmethod
     def update_product(product_id, name, code, base_unit, price, category):
-        conn = get_db_connection()
-        conn.execute('UPDATE products SET name=?, code=?, base_unit=?, price_per_unit=?, category=? WHERE id=?',
-                     (name, code, base_unit, price, category, product_id))
-        conn.commit()
-        conn.close()
+        session = get_db()
+        try:
+            product = session.query(Product).get(product_id)
+            if product:
+                product.name = name
+                product.code = code
+                product.base_unit = base_unit
+                product.price_per_unit = price
+                product.category = category
+                session.commit()
+        finally:
+            session.close()
 
     @staticmethod
     def delete_product(product_id):
-        conn = get_db_connection()
-        conn.execute('DELETE FROM products WHERE id=?', (product_id,))
-        conn.commit()
-        conn.close()
+        session = get_db()
+        try:
+            product = session.query(Product).get(product_id)
+            if product:
+                session.delete(product)
+                session.commit()
+        finally:
+            session.close()
 
 class CustomerModel:
     @staticmethod
     def add_customer(name, phone, address):
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        session = get_db()
         try:
-            cursor.execute('INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)',
-                           (name, phone, address))
-            conn.commit()
-            return cursor.lastrowid
+            customer = Customer(name=name, phone=phone, address=address)
+            session.add(customer)
+            session.commit()
+            return customer.id
         except Exception:
-            return None # Likely duplicate phone
+            session.rollback()
+            return None
         finally:
-            conn.close()
+            session.close()
 
     @staticmethod
     def get_all_customers():
-        conn = get_db_connection()
-        customers = conn.execute('SELECT * FROM customers').fetchall()
-        conn.close()
-        return [dict(c) for c in customers]
+        session = get_db()
+        try:
+            customers = session.query(Customer).all()
+            return [c.to_dict() for c in customers]
+        finally:
+            session.close()
 
     @staticmethod
     def search_customer(query):
-        conn = get_db_connection()
-        customers = conn.execute('SELECT * FROM customers WHERE name LIKE ? OR phone LIKE ?',
-                                 (f'%{query}%', f'%{query}%')).fetchall()
-        conn.close()
-        return [dict(c) for c in customers]
+        session = get_db()
+        try:
+            customers = session.query(Customer).filter(
+                or_(Customer.name.like(f'%{query}%'), Customer.phone.like(f'%{query}%'))
+            ).all()
+            return [c.to_dict() for c in customers]
+        finally:
+            session.close()
 
 class BillModel:
     @staticmethod
     def create_bill(bill_data, items):
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        session = get_db()
         try:
-            cursor.execute('''
-                INSERT INTO bills (bill_number, customer_id, date_time, subtotal, tax_percent, tax_amount, discount_amount, grand_total, payment_method)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                bill_data['bill_number'],
-                bill_data.get('customer_id'),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                bill_data['subtotal'],
-                bill_data.get('tax_percent', 0),
-                bill_data.get('tax_amount', 0),
-                bill_data.get('discount_amount', 0),
-                bill_data['grand_total'],
-                bill_data['payment_method']
-            ))
-            bill_id = cursor.lastrowid
+            bill = Bill(
+                bill_number=bill_data['bill_number'],
+                customer_id=bill_data.get('customer_id'),
+                date_time=bill_data['date_time'],
+                subtotal=bill_data['subtotal'],
+                tax_percent=bill_data.get('tax_percent', 0),
+                tax_amount=bill_data.get('tax_amount', 0),
+                discount_amount=bill_data.get('discount_amount', 0),
+                grand_total=bill_data['grand_total'],
+                payment_method=bill_data['payment_method']
+            )
+            session.add(bill)
+            session.flush() # Get ID
 
             for item in items:
-                cursor.execute('''
-                    INSERT INTO bill_items (bill_id, product_id, product_name, quantity, unit, price, total)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    bill_id,
-                    item['product_id'],
-                    item['product_name'],
-                    item['quantity'],
-                    item['unit'],
-                    item['price'],
-                    item['total']
-                ))
+                bill_item = BillItem(
+                    bill_id=bill.id,
+                    product_id=item['product_id'],
+                    product_name=item['product_name'],
+                    quantity=item['quantity'],
+                    unit=item['unit'],
+                    price=item['price'],
+                    total=item['total']
+                )
+                session.add(bill_item)
             
-            conn.commit()
-            return bill_id
+            session.commit()
+            return bill.id
         except Exception as e:
-            conn.rollback()
+            session.rollback()
             raise e
         finally:
-            conn.close()
+            session.close()
 
     @staticmethod
     def get_recent_bills(limit=10):
-        conn = get_db_connection()
-        bills = conn.execute('SELECT * FROM bills ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
-        conn.close()
-        return [dict(b) for b in bills]
+        session = get_db()
+        try:
+            bills = session.query(Bill).order_by(Bill.id.desc()).limit(limit).all()
+            return [b.to_dict() for b in bills]
+        finally:
+            session.close()
+
+    @staticmethod
+    def delete_all_bills():
+        session = get_db()
+        try:
+            session.query(BillItem).delete()
+            session.query(Bill).delete()
+            session.commit()
+        finally:
+            session.close()
 
 class SettingsModel:
     @staticmethod
     def get_setting(key, default=None):
-        conn = get_db_connection()
-        row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
-        conn.close()
-        return row['value'] if row else default
+        session = get_db()
+        try:
+            setting = session.query(Setting).filter_by(key=key).first()
+            return setting.value if setting else default
+        finally:
+            session.close()
 
     @staticmethod
     def set_setting(key, value):
-        conn = get_db_connection()
-        conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
-        conn.commit()
-        conn.close()
+        session = get_db()
+        try:
+            setting = session.query(Setting).filter_by(key=key).first()
+            if setting:
+                setting.value = value
+            else:
+                setting = Setting(key=key, value=value)
+                session.add(setting)
+            session.commit()
+        finally:
+            session.close()
