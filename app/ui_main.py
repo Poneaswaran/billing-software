@@ -20,39 +20,7 @@ from app.ui_preview import BillPreviewDialog
 
 
 
-class CustomerDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Add Customer")
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QFormLayout()
-        self.name = QLineEdit()
-        self.phone = QLineEdit()
-        self.address = QLineEdit()
-        
-        layout.addRow("Name:", self.name)
-        layout.addRow("Phone:", self.phone)
-        layout.addRow("Address:", self.address)
-        
-        btn_save = QPushButton("Save")
-        btn_save.clicked.connect(self.save_customer)
-        layout.addRow(btn_save)
-        self.setLayout(layout)
-
-    def save_customer(self):
-        if not self.name.text() or not self.phone.text():
-            show_error(self, "Error", "Name and Phone are required.")
-            return
-        
-        cid = CustomerModel.add_customer(self.name.text(), self.phone.text(), self.address.text())
-        if cid:
-            self.customer_id = cid
-            self.customer_name = self.name.text()
-            self.accept()
-        else:
-            show_error(self, "Error", "Could not add customer. Phone might be duplicate.")
+from app.ui_customers import ManageCustomersDialog, CustomerDialog
 
 class PaymentDialog(QDialog):
     def __init__(self, parent=None, total=0.0):
@@ -93,7 +61,7 @@ class PaymentDialog(QDialog):
                     dlg = CustomerDialog(self)
                     if dlg.exec():
                         # Update MainWindow with new customer
-                        self.main_window.current_customer = {'id': dlg.customer_id, 'name': dlg.customer_name}
+                        self.main_window.current_customer = {'id': dlg.customer_id, 'name': dlg.customer_name, 'phone': dlg.customer_phone}
                         self.main_window.lbl_cust.setText(f"{dlg.customer_name}")
                         self.main_window.load_customers()
                         self.accept()
@@ -363,10 +331,11 @@ class MainWindow(QMainWindow):
                     break
 
     def add_customer(self):
-        dlg = CustomerDialog(self)
+        dlg = ManageCustomersDialog(self)
         if dlg.exec():
-            self.current_customer = {'id': dlg.customer_id, 'name': dlg.customer_name}
-            self.lbl_cust.setText(f"{dlg.customer_name}")
+            if dlg.selected_customer:
+                self.current_customer = dlg.selected_customer
+                self.lbl_cust.setText(f"{self.current_customer['name']} ({self.current_customer['phone']})")
             self.load_customers()
 
     def on_product_select(self, text):

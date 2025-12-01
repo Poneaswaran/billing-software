@@ -96,6 +96,40 @@ class CustomerModel:
         finally:
             session.close()
 
+    @staticmethod
+    def update_customer(customer_id, name, phone, address):
+        session = get_db()
+        try:
+            customer = session.query(Customer).get(customer_id)
+            if customer:
+                customer.name = name
+                customer.phone = phone
+                customer.address = address
+                session.commit()
+                return True
+            return False
+        except Exception:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
+    @staticmethod
+    def delete_customer(customer_id):
+        session = get_db()
+        try:
+            customer = session.query(Customer).get(customer_id)
+            if customer:
+                session.delete(customer)
+                session.commit()
+                return True
+            return False
+        except Exception:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
 class BillModel:
     @staticmethod
     def create_bill(bill_data, items):
