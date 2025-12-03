@@ -151,11 +151,13 @@ class MainWindow(QMainWindow):
         self.prod_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.prod_completer.activated.connect(self.on_product_select)
         self.prod_search.setCompleter(self.prod_completer)
+        self.prod_search.returnPressed.connect(self.add_product_to_cart_manual)
         
         self.qty_input = QLineEdit("1")
         self.qty_input.setPlaceholderText("Qty")
         self.qty_input.setFixedWidth(60)
         self.qty_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.qty_input.returnPressed.connect(self.add_product_to_cart_manual)
         
         btn_add_prod = QPushButton("Add Item")
         btn_add_prod.clicked.connect(self.add_product_to_cart_manual)
@@ -345,20 +347,38 @@ class MainWindow(QMainWindow):
             if p['name'] == name:
                 self.add_to_cart(p)
                 self.prod_search.clear()
+                self.prod_search.setFocus()
                 break
 
     def add_product_to_cart_manual(self):
-        text = self.prod_search.text()
-        # Try to find by code first
+        text = self.prod_search.text().strip()
+        if not text:
+            return
+            
+        # Try to find by code/barcode first (exact match)
         found = False
         for p in self.products:
-            if p['code'] == text or p['name'] == text:
+            if p['code'] == text or p['name'].lower() == text.lower():
                 self.add_to_cart(p)
                 self.prod_search.clear()
+                self.qty_input.setText("1")
+                self.prod_search.setFocus()
                 found = True
                 break
+        
         if not found:
-            # Try completer logic if text matches
+            # Try partial match in name or code
+            for p in self.products:
+                if text.lower() in p['name'].lower() or text.lower() in p['code'].lower():
+                    self.add_to_cart(p)
+                    self.prod_search.clear()
+                    self.qty_input.setText("1")
+                    self.prod_search.setFocus()
+                    found = True
+                    break
+        
+        if not found:
+            # Try completer logic if text matches format "Name (Code)"
             self.on_product_select(text)
 
     def add_to_cart(self, product):
