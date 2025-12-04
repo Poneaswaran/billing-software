@@ -22,6 +22,185 @@ from app.ui_preview import BillPreviewDialog
 
 from app.ui_customers import ManageCustomersDialog, CustomerDialog
 
+class DebtCustomersDialog(QDialog):
+    """Dialog to show customers with pending debt"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Debt Customers")
+        self.resize(700, 500)
+        self.init_ui()
+        self.load_debt_customers()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # Title
+        title = QLabel("💰 Customers with Pending Debt")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
+        layout.addWidget(title)
+        
+        # Summary
+        self.summary_label = QLabel("")
+        self.summary_label.setStyleSheet("padding: 5px; color: #d32f2f;")
+        layout.addWidget(self.summary_label)
+        
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Customer", "Phone", "Bills", "Total Debt", "Action"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(4, 120)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.cellDoubleClicked.connect(self.show_customer_bills)
+        layout.addWidget(self.table)
+        
+        # Info label
+        info_label = QLabel("Double-click a customer to view their debt bills")
+        info_label.setStyleSheet("color: #666; font-style: italic;")
+        layout.addWidget(info_label)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_refresh = QPushButton("Refresh")
+        btn_refresh.clicked.connect(self.load_debt_customers)
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.close)
+        btn_layout.addWidget(btn_refresh)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_close)
+        layout.addLayout(btn_layout)
+        
+        self.setLayout(layout)
+
+    def load_debt_customers(self):
+        self.table.setRowCount(0)
+        debt_data = BillModel.get_debt_by_customer()
+        
+        total_debt = sum(d['total_debt'] for d in debt_data)
+        self.summary_label.setText(f"Total Outstanding: ₹{total_debt:.2f} from {len(debt_data)} customer(s)")
+        
+        for row, data in enumerate(debt_data):
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(data['customer_name']))
+            self.table.setItem(row, 1, QTableWidgetItem(data['customer_phone'] or '-'))
+            self.table.setItem(row, 2, QTableWidgetItem(str(data['bill_count'])))
+            
+            debt_item = QTableWidgetItem(f"₹{data['total_debt']:.2f}")
+            debt_item.setForeground(Qt.GlobalColor.red)
+            self.table.setItem(row, 3, debt_item)
+            
+            # Store customer_id in first column
+            self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, data['customer_id'])
+            
+            # View button
+            btn_view = QPushButton("View Bills")
+            btn_view.clicked.connect(lambda checked, cid=data['customer_id'], name=data['customer_name']: 
+                                    self.show_customer_bills_by_id(cid, name))
+            self.table.setCellWidget(row, 4, btn_view)
+
+    def show_customer_bills(self, row, col):
+        customer_id = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        customer_name = self.table.item(row, 0).text()
+        self.show_customer_bills_by_id(customer_id, customer_name)
+
+    def show_customer_bills_by_id(self, customer_id, customer_name):
+        dialog = CustomerDebtBillsDialog(self, customer_id, customer_name)
+        dialog.exec()
+        self.load_debt_customers()  # Refresh after closing
+
+
+class CustomerDebtBillsDialog(QDialog):
+    """Dialog to show debt bills for a specific customer"""
+    def __init__(self, parent, customer_id, customer_name):
+        super().__init__(parent)
+        self.customer_id = customer_id
+        self.setWindowTitle(f"Debt Bills - {customer_name}")
+        self.resize(600, 400)
+        self.init_ui()
+        self.load_bills()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Bill No.", "Date", "Amount", "Status", "Action"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(4, 100)
+        self.table.setAlternatingRowColors(True)
+        layout.addWidget(self.table)
+        
+        # Total
+        self.total_label = QLabel("")
+        self.total_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 10px;")
+        layout.addWidget(self.total_label)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_pay_all = QPushButton("Mark All as Paid")
+        btn_pay_all.setStyleSheet("background-color: #4CAF50; color: white;")
+        btn_pay_all.clicked.connect(self.mark_all_paid)
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.close)
+        btn_layout.addWidget(btn_pay_all)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_close)
+        layout.addLayout(btn_layout)
+        
+        self.setLayout(layout)
+
+    def load_bills(self):
+        self.table.setRowCount(0)
+        bills = BillModel.get_customer_debt_bills(self.customer_id)
+        
+        total = sum(b['grand_total'] for b in bills)
+        self.total_label.setText(f"Total Pending: ₹{total:.2f}")
+        
+        for row, bill in enumerate(bills):
+            self.table.insertRow(row)
+            
+            bill_item = QTableWidgetItem(bill['bill_number'])
+            bill_item.setData(Qt.ItemDataRole.UserRole, bill['id'])
+            self.table.setItem(row, 0, bill_item)
+            
+            self.table.setItem(row, 1, QTableWidgetItem(bill['date_time']))
+            self.table.setItem(row, 2, QTableWidgetItem(f"₹{bill['grand_total']:.2f}"))
+            
+            status_item = QTableWidgetItem("UNPAID")
+            status_item.setForeground(Qt.GlobalColor.red)
+            self.table.setItem(row, 3, status_item)
+            
+            # Pay button
+            btn_pay = QPushButton("Pay")
+            btn_pay.setStyleSheet("background-color: #2196F3; color: white;")
+            btn_pay.clicked.connect(lambda checked, bid=bill['id']: self.mark_paid(bid))
+            self.table.setCellWidget(row, 4, btn_pay)
+
+    def mark_paid(self, bill_id):
+        reply = QMessageBox.question(self, "Confirm Payment",
+                                    "Mark this bill as paid?",
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            if BillModel.mark_bill_as_paid(bill_id):
+                self.load_bills()
+            else:
+                QMessageBox.warning(self, "Error", "Failed to update bill status")
+
+    def mark_all_paid(self):
+        reply = QMessageBox.question(self, "Confirm Payment",
+                                    "Mark ALL bills as paid for this customer?",
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            bills = BillModel.get_customer_debt_bills(self.customer_id)
+            for bill in bills:
+                BillModel.mark_bill_as_paid(bill['id'])
+            self.load_bills()
+
+
 class PaymentDialog(QDialog):
     def __init__(self, parent=None, total=0.0):
         super().__init__(parent)
@@ -260,6 +439,12 @@ class MainWindow(QMainWindow):
         btn_manage_prod = QPushButton("🛠 Manage Products")
         btn_manage_prod.clicked.connect(self.open_product_dialog)
         sidebar_layout.addWidget(btn_manage_prod)
+
+        # Debt Customers
+        btn_debt = QPushButton("💰 Debt Customers")
+        btn_debt.setStyleSheet("background-color: #ffebee;")
+        btn_debt.clicked.connect(self.show_debt_customers)
+        sidebar_layout.addWidget(btn_debt)
 
         # Settings
         btn_settings = QPushButton("⚙ Settings")
@@ -506,6 +691,11 @@ class MainWindow(QMainWindow):
             from app.ui_styles import get_theme_style
             theme = SettingsModel.get_setting('theme', 'Light')
             QApplication.instance().setStyleSheet(get_theme_style(theme))
+
+    def show_debt_customers(self):
+        """Show dialog with customers who have pending debt"""
+        dlg = DebtCustomersDialog(self)
+        dlg.exec()
 
     def clear_bill_history(self):
         reply = QMessageBox.question(self, "Confirm Delete", 

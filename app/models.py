@@ -188,6 +188,77 @@ class BillModel:
         finally:
             session.close()
 
+    @staticmethod
+    def get_debt_bills():
+        """Get all unpaid debt bills with customer info"""
+        session = get_db()
+        try:
+            bills = session.query(Bill).filter(
+                Bill.payment_method == 'Debt',
+                Bill.status != 'PAID'
+            ).order_by(Bill.id.desc()).all()
+            return [b.to_dict() for b in bills]
+        finally:
+            session.close()
+
+    @staticmethod
+    def get_debt_by_customer():
+        """Get total debt grouped by customer"""
+        session = get_db()
+        try:
+            from sqlalchemy import func
+            results = session.query(
+                Customer.id,
+                Customer.name,
+                Customer.phone,
+                func.sum(Bill.grand_total).label('total_debt'),
+                func.count(Bill.id).label('bill_count')
+            ).join(Customer, Bill.customer_id == Customer.id).filter(
+                Bill.payment_method == 'Debt',
+                Bill.status != 'PAID'
+            ).group_by(Customer.id, Customer.name, Customer.phone).all()
+            
+            return [{
+                'customer_id': r.id,
+                'customer_name': r.name,
+                'customer_phone': r.phone,
+                'total_debt': r.total_debt,
+                'bill_count': r.bill_count
+            } for r in results]
+        finally:
+            session.close()
+
+    @staticmethod
+    def mark_bill_as_paid(bill_id):
+        """Mark a debt bill as paid"""
+        session = get_db()
+        try:
+            bill = session.query(Bill).get(bill_id)
+            if bill:
+                bill.status = 'PAID'
+                session.commit()
+                return True
+            return False
+        except Exception:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
+    @staticmethod
+    def get_customer_debt_bills(customer_id):
+        """Get all debt bills for a specific customer"""
+        session = get_db()
+        try:
+            bills = session.query(Bill).filter(
+                Bill.customer_id == customer_id,
+                Bill.payment_method == 'Debt',
+                Bill.status != 'PAID'
+            ).order_by(Bill.id.desc()).all()
+            return [b.to_dict() for b in bills]
+        finally:
+            session.close()
+
 class SettingsModel:
     @staticmethod
     def get_setting(key, default=None):
