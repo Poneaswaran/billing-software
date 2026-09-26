@@ -345,6 +345,27 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        # ToyPop Cloud Sync Menu
+        cloud_menu = menubar.addMenu("☁️ ToyPop Cloud")
+        
+        sync_all_action = QAction("Sync All Now (F5)", self)
+        sync_all_action.setShortcut("F5")
+        sync_all_action.triggered.connect(self.trigger_full_cloud_sync)
+        cloud_menu.addAction(sync_all_action)
+        
+        sync_cat_action = QAction("Download Products Catalog", self)
+        sync_cat_action.triggered.connect(self.trigger_catalog_sync)
+        cloud_menu.addAction(sync_cat_action)
+        
+        upload_bills_action = QAction("Upload Pending Offline Bills", self)
+        upload_bills_action.triggered.connect(self.trigger_bills_sync)
+        cloud_menu.addAction(upload_bills_action)
+        
+        cloud_menu.addSeparator()
+        test_cloud_action = QAction("Test Connection", self)
+        test_cloud_action.triggered.connect(self.test_cloud_handshake)
+        cloud_menu.addAction(test_cloud_action)
+
         # Tabs
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -832,7 +853,14 @@ class MainWindow(QMainWindow):
 
                 self.clear_cart()
                 self.load_recent_bills()
-                # Dashboard might need update if active, but let's leave it to manual refresh or when tab switched
+
+                # Trigger non-blocking cloud sync if connection available
+                try:
+                    from app.sync import ToyPopSyncClient
+                    client = ToyPopSyncClient()
+                    client.sync_pending_bills()
+                except Exception:
+                    pass  # Offline immunity: bill is safely persisted in local SQLite
             except Exception as e:
                 show_error(self, "Error", f"Failed to process bill: {e}")
 
@@ -866,3 +894,75 @@ class MainWindow(QMainWindow):
     def open_product_dialog(self):
         ManageProductsDialog(self).exec()
         self.load_products()
+
+    def test_cloud_handshake(self):
+        from app.sync import ToyPopSyncClient
+        client = ToyPopSyncClient()
+        res = client.bootstrap()
+        if res.get("success"):
+            store = res["data"].get("store", {})
+            QMessageBox.information(
+                self,
+                "Cloud Connected",
+                f"Connected to ToyPop Cloud!\n\nStore: {store.get('name')}\nGSTIN: {store.get('gstin')}\nServer Time: {res['data'].get('serverTime')}"
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Connection Failed",
+                f"Could not connect to ToyPop Cloud:\n{res.get('error')}"
+            )
+
+    def trigger_catalog_sync(self):
+        from app.sync import ToyPopSyncClient
+        client = ToyPopSyncClient()
+        self.statusBar().showMessage("Downloading updated product catalog from ToyPop Cloud...")
+        res = client.sync_catalog(limit=250)
+        if res.get("success"):
+            self.load_products()
+            self.statusBar().showMessage(f"✓ Catalog updated: {res.get('synced')} updated, {res.get('created')} new products", 5000)
+            QMessageBox.information(
+                self,
+                "Catalog Synced",
+                f"Product catalog updated from cloud!\n\nUpdated: {res.get('synced')}\nNew Products: {res.get('created')}\nTotal in batch: {res.get('total')}"
+            )
+        else:
+            self.statusBar().showMessage("✗ Catalog sync failed", 5000)
+            QMessageBox.warning(self, "Sync Error", f"Catalog sync failed:\n{res.get('error')}")
+
+    def trigger_bills_sync(self):
+        from app.sync import ToyPopSyncClient
+        client = ToyPopSyncClient()
+        self.statusBar().showMessage("Uploading pending bills to ToyPop Cloud...")
+        res = client.sync_pending_bills()
+        if res.get("success"):
+            synced = res.get("synced_bills", 0)
+            self.statusBar().showMessage(f"✓ Uploaded {synced} bills to cloud", 5000)
+            QMessageBox.information(
+                self,
+                "Bills Synchronized",
+                f"Offline retail bills uploaded to cloud!\n\nUploaded: {synced}\nRemaining: {res.get('pending', 0)}"
+            )
+        else:
+            self.statusBar().showMessage("✗ Bill upload encountered errors", 5000)
+            errs = "\n".join(res.get("errors", ["Unknown error"]))
+            QMessageBox.warning(self, "Upload Issue", f"Some bills failed to sync:\n{errs}")
+
+    def trigger_full_cloud_sync(self):
+        from app.sync import ToyPopSyncClient
+        client = ToyPopSyncClient()
+        self.statusBar().showMessage("Performing full ToyPop Cloud synchronization...")
+        res = client.full_sync()
+        if res.get("success"):
+            self.load_products()
+            cat = res.get("catalog", {})
+            bills = res.get("bills", {})
+            self.statusBar().showMessage(f"✓ Full sync completed: {cat.get('synced', 0)} prods updated, {bills.get('synced_bills', 0)} bills uploaded", 6000)
+            QMessageBox.information(
+                self,
+                "Sync Complete",
+                f"Full synchronization completed!\n\nCatalog: {cat.get('synced', 0)} updated, {cat.get('created', 0)} new\nBills Uploaded: {bills.get('synced_bills', 0)}"
+            )
+        else:
+            self.statusBar().showMessage("✗ Synchronization error", 5000)
+            QMessageBox.warning(self, "Sync Warning", "One or more sync steps encountered issues. Check settings and network.")

@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, 
     QComboBox, QTabWidget, QWidget, QLabel, QHBoxLayout, QSpinBox,
-    QCheckBox, QGroupBox, QMessageBox
+    QCheckBox, QGroupBox, QMessageBox, QApplication
 )
 from PyQt6.QtCore import Qt
 from app.models import SettingsModel
@@ -311,6 +311,49 @@ class SettingsDialog(QDialog):
         # Initialize serial group visibility
         self.on_scanner_type_changed(self.scanner_type.currentText())
 
+        # ToyPop Cloud Sync Tab
+        self.cloud_tab = QWidget()
+        self.cloud_layout = QVBoxLayout()
+        
+        cloud_config_group = QGroupBox("ToyPop Cloud Credentials")
+        cloud_form = QFormLayout()
+        
+        self.cloud_api_url = QLineEdit(SettingsModel.get_setting('cloud_api_url', 'http://localhost:3000'))
+        self.cloud_api_key = QLineEdit(SettingsModel.get_setting('cloud_api_key', 'tppos_live_toypop_pos_terminal_secret_2026'))
+        self.cloud_terminal_id = QLineEdit(SettingsModel.get_setting('cloud_terminal_id', 'CHENNAI-POS-01'))
+        
+        cloud_form.addRow("Server URL:", self.cloud_api_url)
+        cloud_form.addRow("POS API Key:", self.cloud_api_key)
+        cloud_form.addRow("Terminal ID:", self.cloud_terminal_id)
+        cloud_config_group.setLayout(cloud_form)
+        self.cloud_layout.addWidget(cloud_config_group)
+        
+        cloud_actions_group = QGroupBox("Synchronization Controls")
+        actions_layout = QVBoxLayout()
+        
+        self.lbl_cloud_status = QLabel("Ready to sync with ToyPop Cloud.")
+        self.lbl_cloud_status.setStyleSheet("font-size: 13px; color: #1c3f2d; font-weight: bold; padding: 6px 0;")
+        actions_layout.addWidget(self.lbl_cloud_status)
+        
+        btn_test_conn = QPushButton("🔗 Test Connection & Store Bootstrap")
+        btn_test_conn.clicked.connect(self.test_cloud_connection)
+        actions_layout.addWidget(btn_test_conn)
+        
+        btn_sync_cat = QPushButton("📦 Sync Products Catalog from Cloud")
+        btn_sync_cat.clicked.connect(self.sync_cloud_catalog)
+        actions_layout.addWidget(btn_sync_cat)
+        
+        btn_sync_bills = QPushButton("📤 Upload Offline Bills to Cloud")
+        btn_sync_bills.clicked.connect(self.sync_offline_bills)
+        actions_layout.addWidget(btn_sync_bills)
+        
+        cloud_actions_group.setLayout(actions_layout)
+        self.cloud_layout.addWidget(cloud_actions_group)
+        self.cloud_layout.addStretch()
+        
+        self.cloud_tab.setLayout(self.cloud_layout)
+        self.tabs.addTab(self.cloud_tab, "ToyPop Cloud")
+
         layout.addWidget(self.tabs)
 
         self.save_btn = QPushButton("Save Settings")
@@ -364,7 +407,79 @@ class SettingsDialog(QDialog):
         SettingsModel.set_setting('scanner_beep', str(self.scanner_beep.isChecked()).lower())
         SettingsModel.set_setting('scanner_auto_search', str(self.scanner_auto_search.isChecked()).lower())
 
+        # Save ToyPop Cloud settings
+        SettingsModel.set_setting('cloud_api_url', self.cloud_api_url.text().strip())
+        SettingsModel.set_setting('cloud_api_key', self.cloud_api_key.text().strip())
+        SettingsModel.set_setting('cloud_terminal_id', self.cloud_terminal_id.text().strip())
+
         self.accept()
+
+    def test_cloud_connection(self):
+        from app.sync import ToyPopSyncClient
+        client = ToyPopSyncClient(
+            base_url=self.cloud_api_url.text().strip(),
+            api_key=self.cloud_api_key.text().strip(),
+            terminal_id=self.cloud_terminal_id.text().strip()
+        )
+        self.lbl_cloud_status.setText("Testing connection to ToyPop Cloud...")
+        QApplication.processEvents()
+        res = client.bootstrap()
+        if res.get("success"):
+            store = res["data"].get("store", {})
+            self.lbl_cloud_status.setText(f"✓ Connected to {store.get('name', 'ToyPop Cloud')}!")
+            QMessageBox.information(
+                self,
+                "Cloud Connected",
+                f"Successfully connected to ToyPop Cloud!\n\nStore: {store.get('name')}\nGSTIN: {store.get('gstin')}\nTerminal: {self.cloud_terminal_id.text().strip()}"
+            )
+        else:
+            err = res.get("error", "Unknown error")
+            self.lbl_cloud_status.setText("✗ Connection failed")
+            QMessageBox.warning(self, "Connection Error", f"Could not connect to ToyPop Cloud:\n{err}")
+
+    def sync_cloud_catalog(self):
+        from app.sync import ToyPopSyncClient
+        client = ToyPopSyncClient(
+            base_url=self.cloud_api_url.text().strip(),
+            api_key=self.cloud_api_key.text().strip(),
+            terminal_id=self.cloud_terminal_id.text().strip()
+        )
+        self.lbl_cloud_status.setText("Syncing catalog with ToyPop Cloud...")
+        QApplication.processEvents()
+        res = client.sync_catalog(limit=250)
+        if res.get("success"):
+            self.lbl_cloud_status.setText(f"✓ Synced {res.get('synced')} updated, {res.get('created')} new products!")
+            QMessageBox.information(
+                self,
+                "Catalog Synced",
+                f"Successfully downloaded product catalog!\n\nUpdated: {res.get('synced')}\nNew Products: {res.get('created')}\nTotal in batch: {res.get('total')}"
+            )
+        else:
+            self.lbl_cloud_status.setText("✗ Catalog sync failed")
+            QMessageBox.warning(self, "Catalog Sync Error", f"Catalog sync failed:\n{res.get('error')}")
+
+    def sync_offline_bills(self):
+        from app.sync import ToyPopSyncClient
+        client = ToyPopSyncClient(
+            base_url=self.cloud_api_url.text().strip(),
+            api_key=self.cloud_api_key.text().strip(),
+            terminal_id=self.cloud_terminal_id.text().strip()
+        )
+        self.lbl_cloud_status.setText("Uploading offline bills to ToyPop Cloud...")
+        QApplication.processEvents()
+        res = client.sync_pending_bills()
+        if res.get("success"):
+            synced = res.get("synced_bills", 0)
+            self.lbl_cloud_status.setText(f"✓ Uploaded {synced} bills to cloud!")
+            QMessageBox.information(
+                self,
+                "Bills Synced",
+                f"Offline retail bills successfully synchronized!\n\nUploaded Bills: {synced}\nRemaining Pending: {res.get('pending', 0)}"
+            )
+        else:
+            self.lbl_cloud_status.setText("✗ Bill upload encountered errors")
+            errs = "\n".join(res.get("errors", ["Unknown error"]))
+            QMessageBox.warning(self, "Bill Sync Issues", f"Some bills failed to sync:\n{errs}")
 
     def on_scanner_type_changed(self, scanner_type):
         """Enable/disable serial settings based on scanner type"""

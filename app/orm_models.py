@@ -12,6 +12,10 @@ class Product(Base):
     base_unit = Column(String, nullable=False)
     price_per_unit = Column(Float, nullable=False)
     category = Column(String)
+    cloud_id = Column(String, index=True, nullable=True)
+    stock_qty = Column(Integer, default=0)
+    gst_rate_bps = Column(Integer, default=1800)
+    hsn_code = Column(String, nullable=True)
 
     def to_dict(self):
         return {
@@ -20,7 +24,11 @@ class Product(Base):
             'code': self.code,
             'base_unit': self.base_unit,
             'price_per_unit': self.price_per_unit,
-            'category': self.category
+            'category': self.category,
+            'cloud_id': self.cloud_id,
+            'stock_qty': self.stock_qty,
+            'gst_rate_bps': self.gst_rate_bps,
+            'hsn_code': self.hsn_code
         }
 
 class Customer(Base):
@@ -53,6 +61,9 @@ class Bill(Base):
     grand_total = Column(Float, nullable=False)
     payment_method = Column(String)
     status = Column(String, default='PAID')
+    synced = Column(Integer, default=0, index=True)
+    cloud_order_id = Column(String, nullable=True)
+    local_bill_id = Column(String, nullable=True)
     
     customer = relationship("Customer")
     items = relationship("BillItem", back_populates="bill", cascade="all, delete-orphan")
@@ -70,6 +81,9 @@ class Bill(Base):
             'grand_total': self.grand_total,
             'payment_method': self.payment_method,
             'status': self.status,
+            'synced': self.synced or 0,
+            'cloud_order_id': self.cloud_order_id,
+            'local_bill_id': self.local_bill_id,
             'customer_name': self.customer.name if self.customer else None,
             'customer_phone': self.customer.phone if self.customer else None
         }

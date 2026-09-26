@@ -34,6 +34,7 @@ def get_db_path():
         return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'thangam.db')
 
 DB_PATH = get_db_path()
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 engine = create_engine(f'sqlite:///{DB_PATH}', echo=False)
 Session = sessionmaker(bind=engine)
 
@@ -41,7 +42,7 @@ def get_db():
     return Session()
 
 def init_db():
-    # Ensure directory exists (redundant for frozen path but good for source)
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    import app.orm_models
     Base.metadata.create_all(engine)
 
