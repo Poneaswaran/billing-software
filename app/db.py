@@ -9,21 +9,36 @@ Base = declarative_base()
 def get_db_path():
     if getattr(sys, 'frozen', False):
         # Running as compiled executable
-        # Use a 'data' folder next to the executable for persistence
+        # Use a 'data' folder next to the executable for persistence if writable
         base_dir = os.path.dirname(sys.executable)
         data_dir = os.path.join(base_dir, 'data')
-        db_path = os.path.join(data_dir, 'thangam.db')
         
-        # Create persistent data directory if it doesn't exist
-        os.makedirs(data_dir, exist_ok=True)
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+            test_file = os.path.join(data_dir, '.perm_test')
+            with open(test_file, 'w') as f:
+                f.write('1')
+            os.remove(test_file)
+        except Exception:
+            # Fallback to LocalAppData if Program Files is read-only
+            appdata = os.environ.get('LOCALAPPDATA', os.path.expanduser('~'))
+            data_dir = os.path.join(appdata, 'ToyPopBilling', 'data')
+            os.makedirs(data_dir, exist_ok=True)
+            
+        db_path = os.path.join(data_dir, 'thangam.db')
         
         # If DB doesn't exist in persistent location, try to copy from bundled source
         if not os.path.exists(db_path):
             try:
-                # sys._MEIPASS is where PyInstaller unpacks bundled files
-                bundled_db = os.path.join(sys._MEIPASS, 'data', 'thangam.db')
-                if os.path.exists(bundled_db):
-                    shutil.copy2(bundled_db, db_path)
+                bundled_locations = [
+                    os.path.join(getattr(sys, '_MEIPASS', ''), 'data', 'thangam.db'),
+                    os.path.join(base_dir, '_internal', 'data', 'thangam.db'),
+                    os.path.join(base_dir, 'data', 'thangam.db'),
+                ]
+                for bundled_db in bundled_locations:
+                    if bundled_db and os.path.exists(bundled_db) and os.path.abspath(bundled_db) != os.path.abspath(db_path):
+                        shutil.copy2(bundled_db, db_path)
+                        break
             except Exception as e:
                 print(f"Error copying bundled DB: {e}")
                 pass

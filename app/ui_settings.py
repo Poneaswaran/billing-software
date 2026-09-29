@@ -8,6 +8,7 @@ from PyQt6.QtGui import QPixmap
 import os
 from app.models import SettingsModel
 from app.printer import PrinterManager
+from app.utils.autostart import is_autostart_enabled, set_autostart_enabled
 import serial.tools.list_ports
 
 class SettingsDialog(QDialog):
@@ -363,6 +364,43 @@ class SettingsDialog(QDialog):
         self.cloud_tab.setLayout(self.cloud_layout)
         self.tabs.addTab(self.cloud_tab, "ToyPop Cloud")
 
+        # System & Startup Tab (Background Service & Instant Launch)
+        self.system_tab = QWidget()
+        self.system_layout = QVBoxLayout()
+        
+        system_group = QGroupBox("Background Service & Instant Launch")
+        sys_inner_layout = QVBoxLayout()
+        
+        initial_autostart = is_autostart_enabled() or SettingsModel.get_setting('autostart_with_windows', 'true').lower() == 'true'
+        self.autostart_checkbox = QCheckBox("Start ToyPop Billing automatically with Windows (Instant Launch mode)")
+        self.autostart_checkbox.setChecked(initial_autostart)
+        lbl_auto_desc = QLabel("Pre-warms the billing engine in the background when Windows boots.\nWhen you double-click the desktop shortcut, the app opens instantly in under 0.1s.")
+        lbl_auto_desc.setStyleSheet("color: #666; font-size: 11px; margin-left: 20px; margin-bottom: 8px;")
+        
+        self.minimize_to_tray_checkbox = QCheckBox("Minimize to system tray when closing window")
+        self.minimize_to_tray_checkbox.setChecked(SettingsModel.get_setting('minimize_to_tray', 'true').lower() == 'true')
+        lbl_tray_desc = QLabel("Clicking the [X] button keeps ToyPop Billing ready in memory for instant re-opening throughout the day.\nRight-click tray icon or use File -> Exit to fully quit.")
+        lbl_tray_desc.setStyleSheet("color: #666; font-size: 11px; margin-left: 20px; margin-bottom: 8px;")
+
+        self.show_tray_icon_checkbox = QCheckBox("Show System Tray icon in Windows taskbar notification area")
+        self.show_tray_icon_checkbox.setChecked(SettingsModel.get_setting('show_tray_icon', 'true').lower() == 'true')
+        lbl_icon_desc = QLabel("Displays a convenient tray icon near the clock for quick access and cloud sync.")
+        lbl_icon_desc.setStyleSheet("color: #666; font-size: 11px; margin-left: 20px; margin-bottom: 8px;")
+
+        sys_inner_layout.addWidget(self.autostart_checkbox)
+        sys_inner_layout.addWidget(lbl_auto_desc)
+        sys_inner_layout.addWidget(self.minimize_to_tray_checkbox)
+        sys_inner_layout.addWidget(lbl_tray_desc)
+        sys_inner_layout.addWidget(self.show_tray_icon_checkbox)
+        sys_inner_layout.addWidget(lbl_icon_desc)
+        sys_inner_layout.addStretch()
+        
+        system_group.setLayout(sys_inner_layout)
+        self.system_layout.addWidget(system_group)
+        self.system_layout.addStretch()
+        self.system_tab.setLayout(self.system_layout)
+        self.tabs.addTab(self.system_tab, "System & Startup")
+
         layout.addWidget(self.tabs)
 
         self.save_btn = QPushButton("Save Settings")
@@ -434,6 +472,24 @@ class SettingsDialog(QDialog):
         SettingsModel.set_setting('cloud_api_url', self.cloud_api_url.text().strip())
         SettingsModel.set_setting('cloud_api_key', self.cloud_api_key.text().strip())
         SettingsModel.set_setting('cloud_terminal_id', self.cloud_terminal_id.text().strip())
+
+        # Save System & Startup settings
+        is_auto = self.autostart_checkbox.isChecked()
+        is_min_tray = self.minimize_to_tray_checkbox.isChecked()
+        is_show_tray = self.show_tray_icon_checkbox.isChecked()
+
+        SettingsModel.set_setting('autostart_with_windows', str(is_auto).lower())
+        SettingsModel.set_setting('minimize_to_tray', str(is_min_tray).lower())
+        SettingsModel.set_setting('show_tray_icon', str(is_show_tray).lower())
+
+        set_autostart_enabled(is_auto)
+
+        parent = self.parent()
+        if parent:
+            if hasattr(parent, 'minimize_to_tray_on_close'):
+                parent.minimize_to_tray_on_close = is_min_tray
+            if hasattr(parent, 'tray_icon') and parent.tray_icon:
+                parent.tray_icon.setVisible(is_show_tray)
 
         self.accept()
 

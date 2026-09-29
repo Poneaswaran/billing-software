@@ -1,13 +1,15 @@
 import sys
+import os
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
     QTableWidgetItem, QLineEdit, QLabel, QPushButton, QComboBox, 
     QDialog, QFormLayout, QCompleter, QHeaderView, QSplitter, 
-    QListWidget, QGridLayout, QFrame, QMessageBox, QApplication
+    QListWidget, QGridLayout, QFrame, QMessageBox, QApplication,
+    QSystemTrayIcon, QMenu, QStyle
 )
 from PyQt6.QtCore import Qt, QStringListModel, QTimer
-from PyQt6.QtGui import QAction, QKeySequence, QFont
+from PyQt6.QtGui import QAction, QKeySequence, QFont, QIcon
 
 from app.models import ProductModel, CustomerModel, BillModel, SettingsModel
 from app.utils.helpers import generate_bill_number, convert_unit
@@ -309,7 +311,13 @@ class MainWindow(QMainWindow):
         self.toypop_connected = False
         self.conn_checker = None
         self.daily_sync_worker = None
+        self.force_quit = False
+        self.minimize_to_tray_on_close = SettingsModel.get_setting('minimize_to_tray', 'true').lower() == 'true'
+        self.tray_icon = None
+        self.single_instance_server = None
+        self._notified_tray_minimize = False
         self.init_ui()
+        self.init_tray_icon()
         self.load_products()
         self.load_customers()
         self.load_recent_bills()
@@ -347,7 +355,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(reports_action)
         
         exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close)
+        exit_action.triggered.connect(self.force_quit_app)
         file_menu.addAction(exit_action)
 
         # ToyPop Cloud Sync Menu
@@ -802,7 +810,83 @@ class MainWindow(QMainWindow):
                 msg = f"✓ Daily catalog update complete: {synced} updated, {created} new products"
             self.statusBar().showMessage(msg, 6000)
 
+    def init_tray_icon(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+
+        self.tray_icon = QSystemTrayIcon(self)
+        
+        # Load icon
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base_dir, "assets", "icon.ico")
+        if os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+        else:
+            icon = self.windowIcon()
+            if icon.isNull():
+                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+                
+        self.tray_icon.setIcon(icon)
+        self.tray_icon.setToolTip("ToyPop POS & Billing (Ready - Instant Launch)")
+        
+        tray_menu = QMenu()
+        open_act = QAction("🏪 Open Billing Screen", self)
+        open_act.triggered.connect(self.show_and_activate)
+        tray_menu.addAction(open_act)
+        
+        sync_act = QAction("☁️ Sync Cloud Catalog", self)
+        sync_act.triggered.connect(self.trigger_full_cloud_sync)
+        tray_menu.addAction(sync_act)
+        
+        settings_act = QAction("⚙️ Settings", self)
+        settings_act.triggered.connect(self.open_settings)
+        tray_menu.addAction(settings_act)
+        
+        tray_menu.addSeparator()
+        exit_act = QAction("❌ Exit ToyPop Billing", self)
+        exit_act.triggered.connect(self.force_quit_app)
+        tray_menu.addAction(exit_act)
+        
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self.on_tray_activated)
+        
+        show_tray = SettingsModel.get_setting('show_tray_icon', 'true').lower() == 'true'
+        if show_tray:
+            self.tray_icon.show()
+
+    def on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.show_and_activate()
+
+    def show_and_activate(self):
+        from app.single_instance import force_activate_window
+        force_activate_window(self)
+
+    def force_quit_app(self):
+        self.force_quit = True
+        self.close()
+        QApplication.quit()
+
     def closeEvent(self, event):
+        if not getattr(self, 'force_quit', False) and getattr(self, 'minimize_to_tray_on_close', True):
+            event.ignore()
+            self.hide()
+            if not getattr(self, '_notified_tray_minimize', False):
+                if hasattr(self, 'tray_icon') and self.tray_icon and self.tray_icon.isVisible():
+                    self.tray_icon.showMessage(
+                        "ToyPop Billing",
+                        "Application minimized to background. Click desktop shortcut or tray icon to open instantly!",
+                        QSystemTrayIcon.MessageIcon.Information,
+                        2500
+                    )
+                    self._notified_tray_minimize = True
+            return
+
+        # Full shutdown cleanup
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            self.tray_icon.hide()
+        if hasattr(self, 'single_instance_server') and self.single_instance_server:
+            self.single_instance_server.close()
         if hasattr(self, 'conn_checker') and self.conn_checker and self.conn_checker.isRunning():
             self.conn_checker.wait(1000)
         if hasattr(self, 'daily_sync_worker') and self.daily_sync_worker and self.daily_sync_worker.isRunning():
