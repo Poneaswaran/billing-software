@@ -158,8 +158,21 @@ class BillPreviewDialog(QDialog):
         
         receipt_text = "\n".join(lines)
         
-        # Display as plain text with monospace font
-        self.preview_area.setPlainText(receipt_text)
+        # Display receipt with logo if configured
+        import html
+        logo_path = SettingsModel.get_setting('shop_logo_path', '')
+        logo_html = ""
+        if logo_path and os.path.exists(logo_path):
+            img_url = logo_path.replace('\\', '/')
+            img_w = 170 if WIDTH >= 42 else 130
+            logo_html = f'<div align="center" style="margin-top: 6px; margin-bottom: 10px;"><img src="{img_url}" width="{img_w}" /></div>'
+
+        escaped_text = html.escape(receipt_text)
+        full_html = f'''<div style="background-color: white; color: black; font-family: 'Courier New', monospace; font-size: 11px; padding: 4px;">
+    {logo_html}
+    <pre style="font-family: 'Courier New', monospace; font-size: 11px; margin: 0; line-height: 1.25; white-space: pre-wrap; color: black;">{escaped_text}</pre>
+</div>'''
+        self.preview_area.setHtml(full_html)
 
     def print_bill(self):
         try:
@@ -213,6 +226,16 @@ class BillPreviewDialog(QDialog):
             center = page_width / 2
             
             # Store Header
+            logo_path = SettingsModel.get_setting('shop_logo_path', '')
+            if logo_path and os.path.exists(logo_path):
+                try:
+                    logo_w = 40 * mm
+                    logo_h = 16 * mm
+                    c.drawImage(logo_path, center - logo_w/2, y - logo_h + 3*mm, width=logo_w, height=logo_h, preserveAspectRatio=True, mask='auto')
+                    y -= (logo_h + 2 * mm)
+                except Exception:
+                    pass
+
             c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(center, y, store_name)
             y -= 5 * mm

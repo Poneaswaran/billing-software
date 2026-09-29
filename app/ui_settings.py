@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (
     QCheckBox, QGroupBox, QMessageBox, QApplication
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
+import os
 from app.models import SettingsModel
 from app.printer import PrinterManager
 import serial.tools.list_ports
@@ -33,16 +35,23 @@ class SettingsDialog(QDialog):
         logo_row = QHBoxLayout()
         self.logo_path = QLineEdit(SettingsModel.get_setting('shop_logo_path', ''))
         self.logo_path.setPlaceholderText("Path to logo image...")
+        self.logo_path.textChanged.connect(self.update_logo_preview)
         btn_browse_logo = QPushButton("Browse")
         btn_browse_logo.clicked.connect(self.browse_logo)
         logo_row.addWidget(self.logo_path)
         logo_row.addWidget(btn_browse_logo)
+
+        self.logo_preview_lbl = QLabel()
+        self.logo_preview_lbl.setStyleSheet("border: 1px dashed #bbb; padding: 4px; background: #fff; max-height: 80px;")
+        self.logo_preview_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.update_logo_preview(self.logo_path.text())
 
         self.store_layout.addRow("Store Name:", self.store_name)
         self.store_layout.addRow("Address:", self.store_address)
         self.store_layout.addRow("Phone:", self.store_phone)
         self.store_layout.addRow("Header Msg:", self.header_message)
         self.store_layout.addRow("Logo:", logo_row)
+        self.store_layout.addRow("", self.logo_preview_lbl)
         
         self.store_tab.setLayout(self.store_layout)
         self.tabs.addTab(self.store_tab, "Store Info")
@@ -362,11 +371,25 @@ class SettingsDialog(QDialog):
 
         self.setLayout(layout)
 
+    def update_logo_preview(self, path):
+        """Update logo thumbnail preview"""
+        if path and os.path.exists(path):
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                self.logo_preview_lbl.setPixmap(
+                    pixmap.scaled(200, 70, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                )
+                self.logo_preview_lbl.setVisible(True)
+                return
+        self.logo_preview_lbl.setText("No logo selected")
+        self.logo_preview_lbl.setVisible(bool(path))
+
     def browse_logo(self):
         from PyQt6.QtWidgets import QFileDialog
-        filename, _ = QFileDialog.getOpenFileName(self, "Select Logo", "", "Images (*.png *.jpg *.bmp)")
+        filename, _ = QFileDialog.getOpenFileName(self, "Select Logo", "", "Images (*.png *.jpg *.jpeg *.bmp)")
         if filename:
             self.logo_path.setText(filename)
+            self.update_logo_preview(filename)
 
     def save_settings(self):
         SettingsModel.set_setting('store_name', self.store_name.text())
@@ -622,33 +645,30 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(self, "Error", "Please select a printer first")
                 return
             
-            # Test using Windows printing
+            # Test using Windows printing with ESC/POS and logo support
             try:
-                import tempfile
-                import os
+                from datetime import datetime
+                original_printer = SettingsModel.get_setting('windows_printer_name', '')
+                SettingsModel.set_setting('windows_printer_name', printer_name)
                 
-                # Create a simple test file
-                test_file = os.path.join(tempfile.gettempdir(), "test_print.txt")
-                with open(test_file, 'w') as f:
-                    f.write("=" * 32 + "\n")
-                    f.write("     PRINTER TEST\n")
-                    f.write("=" * 32 + "\n")
-                    f.write(f"Printer: {printer_name}\n")
-                    f.write("If you see this, printing works!\n")
-                    f.write("=" * 32 + "\n")
-                
-                # Print using Windows
-                import subprocess
-                result = subprocess.run(
-                    ['powershell', '-Command', f'Get-Content "{test_file}" | Out-Printer -Name "{printer_name}"'],
-                    capture_output=True, text=True, timeout=30
-                )
-                
-                if result.returncode == 0:
-                    QMessageBox.information(self, "Success", f"Test sent to {printer_name}!")
-                else:
-                    QMessageBox.warning(self, "Error", f"Print failed: {result.stderr}")
-                    
+                pm = PrinterManager()
+                test_bill = {
+                    'bill_number': 'TEST-0001',
+                    'date_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'customer_name': 'Test Print',
+                    'subtotal': 100.0,
+                    'grand_total': 100.0,
+                    'payment_method': 'Cash'
+                }
+                test_items = [{
+                    'product_name': 'Printer Test Item',
+                    'quantity': 1,
+                    'unit': 'pcs',
+                    'total': 100.0
+                }]
+                pm.print_receipt_windows(test_bill, test_items)
+                SettingsModel.set_setting('windows_printer_name', original_printer)
+                QMessageBox.information(self, "Success", f"Test print sent to {printer_name}!")
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Test print failed: {e}")
         

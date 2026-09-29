@@ -91,6 +91,52 @@ def get_usb_printers():
     return printers
 
 
+def get_escpos_logo_bytes(logo_path, chars_per_line=48):
+    """
+    Convert image to ESC/POS raster bit image bytes (GS v 0).
+    Centers the image by embedding it inside a white canvas matching paper printable dot width.
+    - 80mm paper (chars_per_line >= 42): 576 dots printable width (72mm @ 203 DPI)
+    - 58mm paper (chars_per_line < 42): 384 dots printable width (48mm @ 203 DPI)
+    """
+    if not logo_path or not os.path.exists(logo_path):
+        return b""
+    try:
+        from PIL import Image
+        from escpos.printer import Dummy
+
+        img = Image.open(logo_path)
+        # Handle alpha channel (transparency) by pasting onto a clean white background
+        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+            img = img.convert('RGBA')
+            bg = Image.new('RGB', img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+
+        # Target printable width in dots
+        paper_dots = 576 if chars_per_line >= 42 else 384
+        max_logo_w = int(paper_dots * 0.85)
+
+        w, h = img.size
+        if w > max_logo_w:
+            ratio = max_logo_w / float(w)
+            new_h = max(1, int(h * ratio))
+            img = img.resize((max_logo_w, new_h), Image.Resampling.LANCZOS)
+
+        # Center on a full-width white canvas
+        canvas = Image.new('RGB', (paper_dots, img.height), (255, 255, 255))
+        offset_x = max(0, (paper_dots - img.width) // 2)
+        canvas.paste(img, (offset_x, 0))
+
+        d = Dummy()
+        d.image(canvas, impl='bitImageRaster')
+        return bytes(d.output)
+    except Exception as e:
+        error_logger.error(f"Failed to generate ESC/POS logo bytes: {e}")
+        return b""
+
+
 class PrinterManager:
     def __init__(self):
         self.printer = None
@@ -147,6 +193,30 @@ class PrinterManager:
         try:
             if not self.printer:
                 self.connect_printer()
+
+            logo_path = SettingsModel.get_setting('shop_logo_path', '')
+            if logo_path and os.path.exists(logo_path):
+                try:
+                    from PIL import Image
+                    img = Image.open(logo_path)
+                    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                        img = img.convert('RGBA')
+                        bg = Image.new('RGB', img.size, (255, 255, 255))
+                        bg.paste(img, mask=img.split()[3])
+                        img = bg
+                    elif img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    paper_dots = 576
+                    max_logo_w = int(paper_dots * 0.85)
+                    if img.width > max_logo_w:
+                        ratio = max_logo_w / float(img.width)
+                        new_h = max(1, int(img.height * ratio))
+                        img = img.resize((max_logo_w, new_h), Image.Resampling.LANCZOS)
+                    canvas = Image.new('RGB', (paper_dots, img.height), (255, 255, 255))
+                    canvas.paste(img, (max(0, (paper_dots - img.width) // 2), 0))
+                    self.printer.image(canvas, impl='bitImageRaster')
+                except Exception as e:
+                    error_logger.error(f"Failed to print direct logo: {e}")
 
             store_name = SettingsModel.get_setting('store_name', 'Thangam Stores')
             store_address = SettingsModel.get_setting('store_address', '123 Main St, City')
@@ -274,8 +344,16 @@ class PrinterManager:
         
         # ESC/POS commands: Initialize printer + Full cut
         # \x1b@ = Initialize printer, \x1dV\x00 = Full cut
+        logo_path = SettingsModel.get_setting('shop_logo_path', '')
+        logo_bytes = get_escpos_logo_bytes(logo_path, WIDTH)
+
+        init_bytes = b"\x1b@"
         cut_bytes = b"\n\n\n\x1b@\x1dV\x00"
-        raw_bytes = receipt_text.encode('cp437', errors='replace') + cut_bytes
+
+        if logo_bytes:
+            raw_bytes = init_bytes + logo_bytes + b"\n" + receipt_text.encode('cp437', errors='replace') + cut_bytes
+        else:
+            raw_bytes = init_bytes + receipt_text.encode('cp437', errors='replace') + cut_bytes
         
         try:
             printed = False
