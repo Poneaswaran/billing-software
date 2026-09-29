@@ -17,8 +17,9 @@ from app.ui_reports import ReportsDialog
 from app.ui_error_handler import show_error, show_info
 from app.ui_products import ManageProductsDialog
 from app.ui_preview import BillPreviewDialog
-
-
+from app.ui_image_preview import ProductImageDialog
+from app.ui_search_dropdown import ProductSearchLineEdit
+from app.sync import CloudConnectionChecker, DailyCatalogSyncWorker, ToyPopSyncClient
 
 from app.ui_customers import ManageCustomersDialog, CustomerDialog
 
@@ -41,7 +42,7 @@ class DebtCustomersDialog(QDialog):
         
         # Summary
         self.summary_label = QLabel("")
-        self.summary_label.setStyleSheet("padding: 5px; color: #d32f2f;")
+        self.summary_label.setStyleSheet("padding: 5px; color: #e74c3c; font-weight: bold;")
         layout.addWidget(self.summary_label)
         
         # Table
@@ -58,7 +59,7 @@ class DebtCustomersDialog(QDialog):
         
         # Info label
         info_label = QLabel("Double-click a customer to view their debt bills")
-        info_label.setStyleSheet("color: #666; font-style: italic;")
+        info_label.setStyleSheet("color: #8892a0; font-style: italic;")
         layout.addWidget(info_label)
         
         # Buttons
@@ -305,10 +306,14 @@ class MainWindow(QMainWindow):
         self.printer_manager = PrinterManager()
         self.cart = []
         self.current_customer = None
+        self.toypop_connected = False
+        self.conn_checker = None
+        self.daily_sync_worker = None
         self.init_ui()
         self.load_products()
         self.load_customers()
         self.load_recent_bills()
+        self.check_toypop_connection()
 
         # Keyboard Shortcuts
         self.shortcut_f1 = QAction("Focus Search", self)
@@ -379,6 +384,28 @@ class MainWindow(QMainWindow):
         self.dashboard_tab = DashboardWidget()
         self.tabs.addTab(self.dashboard_tab, "Dashboard")
 
+        # Status Bar with Cloud Connection Badge
+        status_bar = self.statusBar()
+        self.status_cloud_lbl = QLabel("⚪ ToyPop: Checking...")
+        self.status_cloud_lbl.setObjectName("statusCloudLbl")
+        self.update_cloud_status_style(False)
+        status_bar.addPermanentWidget(self.status_cloud_lbl)
+
+    def update_cloud_status_style(self, connected: bool, store_name: str = ""):
+        if not hasattr(self, 'status_cloud_lbl'):
+            return
+        from app.models import SettingsModel
+        theme = SettingsModel.get_setting('theme', 'Light')
+        is_dark = (theme == 'Dark')
+        if connected:
+            color = "#4cd137" if is_dark else "#2e7d32"
+            text = f"🟢 ToyPop: Connected ({store_name})" if store_name else "🟢 ToyPop: Connected"
+        else:
+            color = "#8892a0" if is_dark else "#777777"
+            text = "⚪ ToyPop: Offline"
+        self.status_cloud_lbl.setText(text)
+        self.status_cloud_lbl.setStyleSheet(f"padding: 2px 10px; font-weight: bold; color: {color}; font-size: 11px;")
+
     def init_billing_tab(self):
         main_layout = QHBoxLayout(self.billing_tab)
         main_layout.setSpacing(20)
@@ -405,7 +432,7 @@ class MainWindow(QMainWindow):
         btn_add_cust.setToolTip("Add New Customer")
         btn_add_cust.clicked.connect(self.add_customer)
         self.lbl_cust = QLabel("Walk-in Customer")
-        self.lbl_cust.setStyleSheet("font-weight: bold; color: #555;")
+        self.lbl_cust.setObjectName("lblCust")
         
         cust_layout.addWidget(self.cust_search, 2)
         cust_layout.addWidget(btn_add_cust)
@@ -417,13 +444,8 @@ class MainWindow(QMainWindow):
         prod_layout = QHBoxLayout(prod_group)
         prod_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.prod_search = QLineEdit()
-        self.prod_search.setPlaceholderText("📦 Scan Barcode or Search Product...")
-        self.prod_search.setMinimumHeight(40)
-        self.prod_completer = QCompleter()
-        self.prod_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.prod_completer.activated.connect(self.on_product_select)
-        self.prod_search.setCompleter(self.prod_completer)
+        self.prod_search = ProductSearchLineEdit(self)
+        self.prod_search.product_selected.connect(self.on_product_dropdown_selected)
         self.prod_search.returnPressed.connect(self.add_product_to_cart_manual)
         
         self.qty_input = QLineEdit("1")
@@ -448,6 +470,8 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.cellChanged.connect(self.on_cart_item_changed)
+        self.table.itemClicked.connect(self.on_cart_item_clicked)
+        self.table.itemDoubleClicked.connect(self.on_cart_item_double_clicked)
         billing_layout.addWidget(self.table)
 
         # Totals
@@ -484,7 +508,7 @@ class MainWindow(QMainWindow):
         # Actions
         actions_layout = QHBoxLayout()
         btn_hold = QPushButton("Hold Bill")
-        btn_hold.setStyleSheet("background-color: #FFC107; color: black;")
+        btn_hold.setObjectName("holdBtn")
         btn_hold.setMinimumHeight(50)
         btn_hold.clicked.connect(self.hold_bill)
 
@@ -509,18 +533,9 @@ class MainWindow(QMainWindow):
         
         # Resume Bill Button
         self.btn_resume = QPushButton("📄 Resume Held Bill")
-        self.btn_resume.setStyleSheet("background-color: #2196F3; color: white;")
+        self.btn_resume.setObjectName("resumeBtn")
         self.btn_resume.clicked.connect(self.resume_held_bill)
         sidebar_layout.addWidget(self.btn_resume)
-
-        # Quick Products
-        lbl_quick = QLabel("⚡ Quick Products")
-        lbl_quick.setObjectName("sectionHeader")
-        sidebar_layout.addWidget(lbl_quick)
-        
-        self.quick_grid = QGridLayout()
-        # Placeholder for quick buttons logic
-        sidebar_layout.addLayout(self.quick_grid)
 
         # Recent Bills
         recent_header_layout = QHBoxLayout()
@@ -548,7 +563,7 @@ class MainWindow(QMainWindow):
 
         # Debt Customers
         btn_debt = QPushButton("💰 Debt Customers")
-        btn_debt.setStyleSheet("background-color: #ffebee;")
+        btn_debt.setObjectName("debtBtn")
         btn_debt.clicked.connect(self.show_debt_customers)
         sidebar_layout.addWidget(btn_debt)
 
@@ -632,9 +647,8 @@ class MainWindow(QMainWindow):
 
     def load_products(self):
         self.products = ProductModel.get_all_products()
-        names = [f"{p['name']} ({p['code']})" for p in self.products]
-        model = QStringListModel(names)
-        self.prod_completer.setModel(model)
+        if hasattr(self, 'prod_search'):
+            self.prod_search.set_products(self.products)
 
     def load_customers(self):
         self.customers = CustomerModel.get_all_customers()
@@ -691,15 +705,14 @@ class MainWindow(QMainWindow):
                 self.lbl_cust.setText(f"{self.current_customer['name']} ({self.current_customer['phone']})")
             self.load_customers()
 
-    def on_product_select(self, text):
-        # Extract name from "Name (Code)"
-        name = text.rsplit(' (', 1)[0]
-        for p in self.products:
-            if p['name'] == name:
-                self.add_to_cart(p)
-                self.prod_search.clear()
-                self.prod_search.setFocus()
-                break
+    def on_product_dropdown_selected(self, product):
+        """Called when a product is clicked/selected in the search dropdown popup."""
+        if not product:
+            return
+        self.add_to_cart(product)
+        self.qty_input.setText("1")
+        self.prod_search.clear()
+        self.prod_search.setFocus()
 
     def add_product_to_cart_manual(self):
         text = self.prod_search.text().strip()
@@ -709,7 +722,7 @@ class MainWindow(QMainWindow):
         # Try to find by code/barcode first (exact match)
         found = False
         for p in self.products:
-            if p['code'] == text or p['name'].lower() == text.lower():
+            if p['code'].lower() == text.lower() or p['name'].lower() == text.lower():
                 self.add_to_cart(p)
                 self.prod_search.clear()
                 self.qty_input.setText("1")
@@ -727,10 +740,74 @@ class MainWindow(QMainWindow):
                     self.prod_search.setFocus()
                     found = True
                     break
-        
-        if not found:
-            # Try completer logic if text matches format "Name (Code)"
-            self.on_product_select(text)
+
+    def on_cart_item_clicked(self, item):
+        pass
+
+    def on_cart_item_double_clicked(self, item):
+        """Opens high-resolution image dialog when double-clicking a cart item."""
+        row = item.row()
+        if row < len(self.cart):
+            cart_item = self.cart[row]
+            prod_id = cart_item.get('product_id')
+            p = next((x for x in self.products if x['id'] == prod_id), None)
+            if p and p.get('image_url') and self.toypop_connected:
+                from app.ui_image_preview import ProductImageDialog
+                from app.image_loader import ImageLoader
+                loader = ImageLoader.get_instance()
+                pix = loader.load_image(p['image_url'])
+                dlg = ProductImageDialog(self, p, pix)
+                dlg.exec()
+
+    def check_toypop_connection(self):
+        """Asynchronously checks if ToyPop Cloud is connected."""
+        try:
+            self.conn_checker = CloudConnectionChecker(parent=self)
+            self.conn_checker.status_checked.connect(self.on_cloud_status_updated)
+            self.conn_checker.start()
+        except Exception:
+            self.on_cloud_status_updated(False, {})
+
+    def on_cloud_status_updated(self, connected: bool, data: dict):
+        self.toypop_connected = connected
+        if hasattr(self, 'prod_search'):
+            self.prod_search.set_toypop_connected(connected)
+        store_name = data.get("store", {}).get("name", "ToyPop Cloud") if connected else ""
+        self.update_cloud_status_style(connected, store_name)
+        if connected:
+            self.trigger_daily_or_first_time_sync()
+
+    def trigger_daily_or_first_time_sync(self):
+        """Automatically downloads catalog on first time setup or performs daily sync when cloud connected."""
+        try:
+            self.daily_sync_worker = DailyCatalogSyncWorker(parent=self)
+            self.daily_sync_worker.sync_started.connect(self.on_daily_sync_started)
+            self.daily_sync_worker.sync_completed.connect(self.on_daily_sync_completed)
+            self.daily_sync_worker.start()
+        except Exception as e:
+            print(f"[Sync] Daily sync trigger note: {e}")
+
+    def on_daily_sync_started(self, message: str):
+        self.statusBar().showMessage(f"☁️ {message}", 6000)
+
+    def on_daily_sync_completed(self, success: bool, res: dict):
+        if success:
+            self.load_products()
+            is_first = res.get("is_first_time", False)
+            synced = res.get("synced", 0)
+            created = res.get("created", 0)
+            if is_first:
+                msg = f"✓ Initial setup complete: {created} products downloaded from ToyPop Cloud!"
+            else:
+                msg = f"✓ Daily catalog update complete: {synced} updated, {created} new products"
+            self.statusBar().showMessage(msg, 6000)
+
+    def closeEvent(self, event):
+        if hasattr(self, 'conn_checker') and self.conn_checker and self.conn_checker.isRunning():
+            self.conn_checker.wait(1000)
+        if hasattr(self, 'daily_sync_worker') and self.daily_sync_worker and self.daily_sync_worker.isRunning():
+            self.daily_sync_worker.wait(1000)
+        super().closeEvent(event)
 
     def add_to_cart(self, product):
         try:
@@ -869,10 +946,13 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             # Reload Theme
             from app.models import SettingsModel
-            from app.ui_styles import get_theme_style
+            from app.ui_styles import apply_theme_to_app
             theme = SettingsModel.get_setting('theme', 'Light')
             touch_mode = SettingsModel.get_setting('touch_mode', 'false').lower() == 'true'
-            QApplication.instance().setStyleSheet(get_theme_style(theme, touch_mode))
+            apply_theme_to_app(QApplication.instance(), theme, touch_mode)
+            if hasattr(self, 'prod_search'):
+                self.prod_search.apply_theme(theme)
+            self.update_cloud_status_style(self.toypop_connected)
 
     def show_debt_customers(self):
         """Show dialog with customers who have pending debt"""
@@ -901,12 +981,14 @@ class MainWindow(QMainWindow):
         res = client.bootstrap()
         if res.get("success"):
             store = res["data"].get("store", {})
+            self.check_toypop_connection()
             QMessageBox.information(
                 self,
                 "Cloud Connected",
                 f"Connected to ToyPop Cloud!\n\nStore: {store.get('name')}\nGSTIN: {store.get('gstin')}\nServer Time: {res['data'].get('serverTime')}"
             )
         else:
+            self.check_toypop_connection()
             QMessageBox.warning(
                 self,
                 "Connection Failed",
@@ -920,6 +1002,7 @@ class MainWindow(QMainWindow):
         res = client.sync_catalog(limit=250)
         if res.get("success"):
             self.load_products()
+            self.check_toypop_connection()
             self.statusBar().showMessage(f"✓ Catalog updated: {res.get('synced')} updated, {res.get('created')} new products", 5000)
             QMessageBox.information(
                 self,

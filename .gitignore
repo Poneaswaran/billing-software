@@ -141,4 +141,6 @@ cython_debug/
 # Project Specific
 logs/
 data/thangam.db
+data/*.db
 data/print_queue.json
+data/image_cache/

@@ -139,12 +139,17 @@ class ManageProductsDialog(QDialog):
         btn_delete.setObjectName("dangerBtn")
         btn_delete.clicked.connect(self.delete_product)
         
+        btn_view_img = QPushButton("🖼 View Image")
+        btn_view_img.clicked.connect(self.view_product_image)
+
         action_layout.addStretch()
+        action_layout.addWidget(btn_view_img)
         action_layout.addWidget(btn_print)
         action_layout.addWidget(btn_edit)
         action_layout.addWidget(btn_delete)
         layout.addLayout(action_layout)
 
+        self.table.doubleClicked.connect(self.view_product_image)
         self.setLayout(layout)
 
     def load_products(self):
@@ -219,3 +224,23 @@ class ManageProductsDialog(QDialog):
                     show_info(self, "Success", f"Sent {dlg.count} labels to printer.")
                 except Exception as e:
                     show_error(self, "Printing Error", str(e))
+
+    def view_product_image(self):
+        row = self.table.currentRow()
+        if row < 0:
+            show_info(self, "Selection", "Please select a product to view image.")
+            return
+
+        product_id = int(self.table.item(row, 0).text())
+        product = next((p for p in self.products if p['id'] == product_id), None)
+        if product:
+            from app.ui_image_preview import ProductImageDialog
+            from app.image_loader import ImageLoader
+            img_url = product.get('image_url')
+            pix = None
+            if img_url:
+                loader = ImageLoader.get_instance()
+                pix = loader.load_image(img_url)
+            dlg = ProductImageDialog(self, product, pix)
+            dlg.exec()
+

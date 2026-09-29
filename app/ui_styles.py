@@ -197,6 +197,50 @@ QScrollBar::handle:horizontal {
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     width: 0px;
 }
+/* Custom Component Selectors */
+QLineEdit#prodSearch {
+    padding: 6px 12px;
+    font-size: 13px;
+    border: 2px solid #2196F3;
+    border-radius: 6px;
+    background-color: #ffffff;
+    color: #2f3640;
+    selection-background-color: #00a8ff;
+}
+QLineEdit#prodSearch:focus {
+    border: 2px solid #2e7d32;
+    background-color: #fcfffd;
+}
+
+QLabel#lblCust {
+    font-weight: bold;
+    color: #555555;
+}
+
+QPushButton#debtBtn {
+    background-color: #ffebee;
+    color: #c62828;
+    border: 1px solid #ffcdd2;
+}
+QPushButton#debtBtn:hover {
+    background-color: #ffcdd2;
+}
+
+QPushButton#resumeBtn {
+    background-color: #2196F3;
+    color: white;
+}
+QPushButton#resumeBtn:hover {
+    background-color: #1e88e5;
+}
+
+QPushButton#holdBtn {
+    background-color: #FFC107;
+    color: #212121;
+}
+QPushButton#holdBtn:hover {
+    background-color: #ffb300;
+}
 """
 
 # Specific styles for labels
@@ -281,6 +325,7 @@ QLineEdit, QComboBox, QDateEdit {
     background-color: #353b48;
     color: white;
     selection-background-color: #00a8ff;
+    placeholder-text-color: #8892a0;
 }
 
 QLineEdit:focus, QComboBox:focus, QDateEdit:focus {
@@ -297,7 +342,7 @@ QAbstractItemView {
 
 /* Buttons */
 QPushButton {
-    background-color: #718093;
+    background-color: #4b5563;
     color: white;
     padding: 8px 16px;
     border-radius: 5px;
@@ -306,7 +351,7 @@ QPushButton {
 }
 
 QPushButton:hover {
-    background-color: #7f8fa6;
+    background-color: #606f84;
 }
 
 QPushButton:pressed {
@@ -339,10 +384,11 @@ QTableWidget {
     selection-background-color: #00a8ff;
     selection-color: white;
     color: white;
+    alternate-background-color: #2d323d;
 }
 
 QHeaderView::section {
-    background-color: #2f3640;
+    background-color: #272d36;
     color: white;
     padding: 8px;
     border: none;
@@ -357,9 +403,28 @@ QListWidget {
     color: white;
 }
 
-QFrame {
-    background-color: #353b48;
+QListWidget::item:hover {
+    background-color: #404856;
+}
+
+QListWidget::item:selected {
+    background-color: #0097e6;
+    color: white;
+}
+
+QGroupBox {
+    font-weight: bold;
     border: 1px solid #7f8fa6;
+    border-radius: 5px;
+    margin-top: 10px;
+    color: #f5f6fa;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px;
+    color: #f5f6fa;
 }
 
 #totalsFrame {
@@ -373,7 +438,7 @@ QFrame {
     font-weight: bold;
     color: #2ecc71;
     padding: 10px;
-    background-color: #2f3640;
+    background-color: #272d36;
     border-radius: 8px;
     border: 1px solid #27ae60;
 }
@@ -385,15 +450,62 @@ QFrame {
     margin-bottom: 5px;
 }
 
+/* Custom Component Selectors - Dark Mode */
+QLineEdit#prodSearch {
+    padding: 6px 12px;
+    font-size: 13px;
+    border: 2px solid #3d84b8;
+    border-radius: 6px;
+    background-color: #2c323d;
+    color: #ffffff;
+    selection-background-color: #00a8ff;
+    placeholder-text-color: #8892a0;
+}
+QLineEdit#prodSearch:focus {
+    border: 2px solid #4caf50;
+    background-color: #353c48;
+}
+
+QLabel#lblCust {
+    font-weight: bold;
+    color: #dcdde1;
+}
+
+QPushButton#debtBtn {
+    background-color: #4a2328;
+    color: #ffb4b4;
+    border: 1px solid #78353d;
+}
+QPushButton#debtBtn:hover {
+    background-color: #5c2b32;
+}
+
+QPushButton#resumeBtn {
+    background-color: #1976d2;
+    color: white;
+}
+QPushButton#resumeBtn:hover {
+    background-color: #2196f3;
+}
+
+QPushButton#holdBtn {
+    background-color: #f39c12;
+    color: #1a1a1a;
+    font-weight: bold;
+}
+QPushButton#holdBtn:hover {
+    background-color: #e67e22;
+}
+
 /* Scrollbars */
 QScrollBar:vertical {
     border: none;
-    background: #2f3640;
+    background: #272d36;
     width: 10px;
     margin: 0px 0px 0px 0px;
 }
 QScrollBar::handle:vertical {
-    background: #7f8fa6;
+    background: #576574;
     min-height: 20px;
     border-radius: 5px;
 }
@@ -402,12 +514,12 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 }
 QScrollBar:horizontal {
     border: none;
-    background: #2f3640;
+    background: #272d36;
     height: 10px;
     margin: 0px 0px 0px 0px;
 }
 QScrollBar::handle:horizontal {
-    background: #7f8fa6;
+    background: #576574;
     min-width: 20px;
     border-radius: 5px;
 }
@@ -474,6 +586,30 @@ QScrollBar::handle:horizontal {
 }
 """
 
+from PyQt6.QtGui import QPalette, QColor
+from PyQt6.QtCore import Qt
+
+def get_theme_palette(theme_name):
+    if theme_name == 'Dark':
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(47, 54, 64))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(245, 246, 250))
+        palette.setColor(QPalette.ColorRole.Base, QColor(44, 50, 61))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 59, 72))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(245, 246, 250))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(47, 54, 64))
+        palette.setColor(QPalette.ColorRole.Text, QColor(245, 246, 250))
+        palette.setColor(QPalette.ColorRole.Button, QColor(75, 85, 99))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(245, 246, 250))
+        palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
+        palette.setColor(QPalette.ColorRole.Link, QColor(0, 151, 230))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 168, 255))
+        palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.white)
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(136, 146, 160))
+        return palette
+    else:
+        return QPalette()
+
 def get_theme_style(theme_name, touch_mode=False):
     style = GLOBAL_STYLE
     if theme_name == 'Dark':
@@ -483,3 +619,13 @@ def get_theme_style(theme_name, touch_mode=False):
         style += TOUCH_STYLE
         
     return style
+
+def apply_theme_to_app(app, theme_name, touch_mode=False):
+    """Applies stylesheet and palette uniformly across the QApplication."""
+    if not app:
+        return
+    app.setStyleSheet(get_theme_style(theme_name, touch_mode))
+    pal = get_theme_palette(theme_name)
+    if pal:
+        app.setPalette(pal)
+

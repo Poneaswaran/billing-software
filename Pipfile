@@ -1,0 +1,22 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+pyqt6 = "==6.10.0"
+python-escpos = "==3.1"
+qrcode = "==8.2"
+reportlab = "==4.4.5"
+pyinstaller = "==6.17.0"
+sqlalchemy = "==2.0.44"
+pyserial = "==3.5"
+pywin32 = ">=306"
+matplotlib = "==3.8.3"
+pandas = "==2.2.0"
+openpyxl = "==3.1.2"
+
+[dev-packages]
+
+[requires]
+python_version = "3.13"

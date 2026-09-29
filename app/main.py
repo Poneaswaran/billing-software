@@ -5,7 +5,7 @@ from app.db import init_db
 from app.ui_main import MainWindow
 from app.utils.logger import app_logger
 
-from app.ui_styles import get_theme_style
+from app.ui_styles import apply_theme_to_app
 from app.models import SettingsModel
 
 def main():
@@ -16,12 +16,11 @@ def main():
 
         # Start App
         app = QApplication(sys.argv)
+        app.setStyle("Fusion")
         
         theme = SettingsModel.get_setting('theme', 'Light')
-        app.setStyleSheet(get_theme_style(theme))
-        
-        # Apply Theme (Optional: Dark Mode or Custom Styles)
-        app.setStyle("Fusion")
+        touch_mode = SettingsModel.get_setting('touch_mode', 'false').lower() == 'true'
+        apply_theme_to_app(app, theme, touch_mode)
         
         window = MainWindow()
         window.show()

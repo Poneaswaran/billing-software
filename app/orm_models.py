@@ -16,6 +16,7 @@ class Product(Base):
     stock_qty = Column(Integer, default=0)
     gst_rate_bps = Column(Integer, default=1800)
     hsn_code = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
 
     def to_dict(self):
         return {
@@ -28,7 +29,8 @@ class Product(Base):
             'cloud_id': self.cloud_id,
             'stock_qty': self.stock_qty,
             'gst_rate_bps': self.gst_rate_bps,
-            'hsn_code': self.hsn_code
+            'hsn_code': self.hsn_code,
+            'image_url': self.image_url
         }
 
 class Customer(Base):

@@ -33,6 +33,8 @@ def ensure_db_columns():
                 conn.execute(text("ALTER TABLE products ADD COLUMN gst_rate_bps INTEGER DEFAULT 1800"))
             if 'hsn_code' not in existing_product_cols:
                 conn.execute(text("ALTER TABLE products ADD COLUMN hsn_code VARCHAR"))
+            if 'image_url' not in existing_product_cols:
+                conn.execute(text("ALTER TABLE products ADD COLUMN image_url VARCHAR"))
                 
             # Check bills columns
             res_bills = conn.execute(text("PRAGMA table_info(bills)")).fetchall()
@@ -104,6 +106,14 @@ class ToyPopSyncClient:
         except Exception as e:
             return {"status": 0, "error": str(e)}
 
+    def is_connected(self):
+        """Quick check to see if ToyPop Cloud is reachable and responsive."""
+        try:
+            res = self._make_request("/api/pos/bootstrap")
+            return res.get("status") == 200
+        except Exception:
+            return False
+
     def bootstrap(self):
         """Fetches terminal configuration, store info, and tax rules from ToyPop."""
         res = self._make_request("/api/pos/bootstrap")
@@ -141,6 +151,7 @@ class ToyPopSyncClient:
                 stock = int(item.get("stock", 0))
                 gst_bps = int(item.get("gstRateBps", 1800))
                 hsn = str(item.get("hsnCode", "95030090"))
+                image_url = str(item.get("imageUrl") or item.get("image") or "")
 
                 # Try matching existing product by cloud_id or barcode/code
                 prod = session.query(Product).filter(
@@ -156,6 +167,8 @@ class ToyPopSyncClient:
                     prod.gst_rate_bps = gst_bps
                     prod.hsn_code = hsn
                     prod.cloud_id = cloud_id
+                    if image_url:
+                        prod.image_url = image_url
                     synced_count += 1
                 else:
                     new_prod = Product(
@@ -167,12 +180,17 @@ class ToyPopSyncClient:
                         stock_qty=stock,
                         gst_rate_bps=gst_bps,
                         hsn_code=hsn,
-                        cloud_id=cloud_id
+                        cloud_id=cloud_id,
+                        image_url=image_url
                     )
                     session.add(new_prod)
                     new_count += 1
 
             session.commit()
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            SettingsModel.set_setting("last_catalog_sync_date", today_str)
+            SettingsModel.set_setting("last_catalog_sync_time", time_str)
             return {
                 "success": True,
                 "synced": synced_count,
@@ -184,6 +202,24 @@ class ToyPopSyncClient:
             return {"success": False, "error": str(e)}
         finally:
             session.close()
+
+    def is_first_time_sync(self) -> bool:
+        """Returns True if local products database has 0 products or has never been synced."""
+        session = get_db()
+        try:
+            prod_count = session.query(Product).count()
+            last_date = SettingsModel.get_setting("last_catalog_sync_date", "")
+            return prod_count == 0 or not last_date
+        finally:
+            session.close()
+
+    def is_daily_sync_needed(self) -> bool:
+        """Returns True if local DB is empty or has not been synced today."""
+        if self.is_first_time_sync():
+            return True
+        last_date = SettingsModel.get_setting("last_catalog_sync_date", "")
+        today = datetime.now().strftime("%Y-%m-%d")
+        return last_date != today
 
     def sync_pending_bills(self):
         """Pushes locally completed offline bills to ToyPop Cloud orders collection."""
@@ -304,3 +340,56 @@ if HAS_PYQT:
                     self.error.emit(str(res.get("error", "Sync failed")))
             except Exception as e:
                 self.error.emit(str(e))
+
+    class CloudConnectionChecker(QThread):
+        """Asynchronously probes ToyPop Cloud connectivity without freezing the UI."""
+        status_checked = pyqtSignal(bool, dict)
+
+        def __init__(self, client=None, parent=None):
+            super().__init__(parent)
+            self.client = client
+
+        def run(self):
+            try:
+                c = self.client or ToyPopSyncClient()
+                res = c.bootstrap()
+                if res.get("success"):
+                    self.status_checked.emit(True, res.get("data", {}))
+                else:
+                    self.status_checked.emit(False, {})
+            except Exception:
+                self.status_checked.emit(False, {})
+
+    class DailyCatalogSyncWorker(QThread):
+        """Background thread that automatically downloads/updates catalog if first time or daily update needed."""
+        sync_started = pyqtSignal(str)
+        sync_completed = pyqtSignal(bool, dict)
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.client = ToyPopSyncClient()
+
+        def run(self):
+            try:
+                if not self.client.is_connected():
+                    self.sync_completed.emit(False, {"skipped": True, "reason": "offline"})
+                    return
+
+                is_first = self.client.is_first_time_sync()
+                is_daily = self.client.is_daily_sync_needed()
+
+                if is_first:
+                    self.sync_started.emit("First time setup: downloading product catalog from ToyPop Cloud...")
+                    res = self.client.sync_catalog(limit=250)
+                    res["is_first_time"] = True
+                    self.sync_completed.emit(res.get("success", False), res)
+                elif is_daily:
+                    self.sync_started.emit("Daily update: synchronizing product catalog with ToyPop Cloud...")
+                    res = self.client.sync_catalog(limit=250)
+                    res["is_daily"] = True
+                    self.sync_completed.emit(res.get("success", False), res)
+                else:
+                    self.sync_completed.emit(False, {"skipped": True, "reason": "already_synced_today"})
+            except Exception as e:
+                self.sync_completed.emit(False, {"error": str(e)})
+

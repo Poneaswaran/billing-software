@@ -5,10 +5,10 @@ from datetime import datetime
 
 class ProductModel:
     @staticmethod
-    def add_product(name, code, base_unit, price, category="General"):
+    def add_product(name, code, base_unit, price, category="General", image_url=None):
         session = get_db()
         try:
-            product = Product(name=name, code=code, base_unit=base_unit, price_per_unit=price, category=category)
+            product = Product(name=name, code=code, base_unit=base_unit, price_per_unit=price, category=category, image_url=image_url)
             session.add(product)
             session.commit()
             return product.id
@@ -36,7 +36,7 @@ class ProductModel:
             session.close()
 
     @staticmethod
-    def update_product(product_id, name, code, base_unit, price, category):
+    def update_product(product_id, name, code, base_unit, price, category, image_url=None):
         session = get_db()
         try:
             product = session.query(Product).get(product_id)
@@ -46,6 +46,8 @@ class ProductModel:
                 product.base_unit = base_unit
                 product.price_per_unit = price
                 product.category = category
+                if image_url is not None:
+                    product.image_url = image_url
                 session.commit()
         finally:
             session.close()
