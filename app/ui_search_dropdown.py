@@ -264,6 +264,7 @@ class ProductSearchDropdownPopup(QFrame):
                 if q in p.get('name', '').lower()
                 or q in p.get('code', '').lower()
                 or q in p.get('category', '').lower()
+                or any(q in str(alias).lower() for alias in p.get('aliases', []))
             ]
 
         self.lbl_header.setText(f"📦 Products in Database ({len(self.filtered_products)} of {len(self.products)})")

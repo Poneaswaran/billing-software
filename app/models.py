@@ -1,6 +1,6 @@
 from app.db import get_db
-from app.orm_models import Product, Customer, Bill, BillItem, Setting
-from sqlalchemy import or_
+from app.orm_models import Product, Customer, Bill, BillItem, Setting, ProductCodeAlias
+from sqlalchemy import or_, text
 from datetime import datetime
 
 class ProductModel:
@@ -20,7 +20,44 @@ class ProductModel:
         session = get_db()
         try:
             products = session.query(Product).all()
-            return [p.to_dict() for p in products]
+            alias_map = {}
+            try:
+                alias_rows = session.execute(text("SELECT cloud_id, code FROM product_code_aliases")).fetchall()
+                for cid, c in alias_rows:
+                    alias_map.setdefault(cid, []).append(c)
+            except Exception:
+                pass
+            res = []
+            for p in products:
+                d = p.to_dict()
+                d['aliases'] = alias_map.get(p.cloud_id, [])
+                res.append(d)
+            return res
+        finally:
+            session.close()
+
+    @staticmethod
+    def get_product_by_code_or_alias(code):
+        session = get_db()
+        try:
+            norm_code = str(code or "").strip().upper()
+            prod = session.query(Product).filter(
+                Product.code == norm_code
+            ).first()
+            if prod:
+                return prod.to_dict()
+
+            try:
+                row = session.execute(
+                    text("SELECT p.* FROM products p JOIN product_code_aliases a ON a.cloud_id = p.cloud_id WHERE a.code = :code LIMIT 1"),
+                    {"code": norm_code}
+                ).mappings().first()
+                if row:
+                    return dict(row)
+            except Exception:
+                pass
+
+            return None
         finally:
             session.close()
 
@@ -28,6 +65,7 @@ class ProductModel:
     def search_products(query):
         session = get_db()
         try:
+            q_norm = str(query or "").strip().upper()
             products = session.query(Product).filter(
                 or_(Product.name.like(f'%{query}%'), Product.code.like(f'%{query}%'))
             ).all()

@@ -110,3 +110,20 @@ class Setting(Base):
     
     key = Column(String, primary_key=True)
     value = Column(String)
+
+class ProductCodeAlias(Base):
+    __tablename__ = 'product_code_aliases'
+
+    code = Column(String, primary_key=True)
+    cloud_id = Column(String, index=True, nullable=False)
+    is_primary = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'code': self.code,
+            'cloud_id': self.cloud_id,
+            'is_primary': bool(self.is_primary),
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+

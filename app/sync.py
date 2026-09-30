@@ -4,7 +4,7 @@ import urllib.error
 from datetime import datetime
 from sqlalchemy import text
 from app.db import get_db, init_db, DB_PATH
-from app.orm_models import Product, Bill, BillItem
+from app.orm_models import Product, Bill, BillItem, ProductCodeAlias
 from app.models import SettingsModel
 
 try:
@@ -15,7 +15,7 @@ except ImportError:
 
 
 def ensure_db_columns():
-    """Safely adds cloud sync columns to SQLite tables if they do not exist."""
+    """Safely adds cloud sync columns and alias table to SQLite database if not present."""
     init_db()
     session = get_db()
     try:
@@ -46,12 +46,111 @@ def ensure_db_columns():
                 conn.execute(text("ALTER TABLE bills ADD COLUMN cloud_order_id VARCHAR"))
             if 'local_bill_id' not in existing_bill_cols:
                 conn.execute(text("ALTER TABLE bills ADD COLUMN local_bill_id VARCHAR"))
+
+            # Ensure product_code_aliases table exists
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS product_code_aliases (
+                    code VARCHAR PRIMARY KEY,
+                    cloud_id VARCHAR NOT NULL,
+                    is_primary BOOLEAN DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_alias_code ON product_code_aliases(code);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_alias_cloud_id ON product_code_aliases(cloud_id);"))
                 
             conn.commit()
     except Exception as e:
         print(f"[Sync] DB migration notice: {e}")
     finally:
         session.close()
+
+
+def normalize_pos_code(code: str) -> str:
+    """Normalizes scanned code or barcode to uppercase trimmed string."""
+    return str(code or "").strip().upper()
+
+
+def reconcile_alias(session, code: str, cloud_id: str, is_primary: bool):
+    """
+    Fail-closed alias reconciliation:
+    Prevents corrupt or invalid payloads from silently rebinding an existing alias
+    from Product A to Product B.
+    """
+    clean_code = normalize_pos_code(code)
+    if not clean_code:
+        return
+
+    existing = session.execute(
+        text("SELECT cloud_id, is_primary FROM product_code_aliases WHERE code = :code"),
+        {"code": clean_code}
+    ).mappings().first()
+
+    if existing:
+        if existing["cloud_id"] != cloud_id:
+            # Fail-closed: Never silently rebind an alias belonging to another product!
+            raise ValueError(
+                f"Alias collision: code '{clean_code}' already belongs to cloud_id '{existing['cloud_id']}', cannot reassign to '{cloud_id}'"
+            )
+        session.execute(
+            text("UPDATE product_code_aliases SET is_primary = :is_primary WHERE code = :code"),
+            {"is_primary": 1 if is_primary else 0, "code": clean_code}
+        )
+    else:
+        session.execute(
+            text("INSERT INTO product_code_aliases (code, cloud_id, is_primary) VALUES (:code, :cloud_id, :is_primary)"),
+            {"code": clean_code, "cloud_id": cloud_id, "is_primary": 1 if is_primary else 0}
+        )
+
+
+def upsert_product_and_aliases(session, item: dict):
+    """Upserts product into SQLite and reconciles aliases into product_code_aliases."""
+    cloud_id = str(item.get("id") or "")
+    name = str(item.get("name") or "Toy")
+    code = normalize_pos_code(item.get("barcode") or item.get("sku") or cloud_id)
+    price = float(item.get("priceRupees", (item.get("pricePaise", 0) / 100.0)))
+    category = str(item.get("category", "General"))
+    stock = int(item.get("stock", 0))
+    gst_bps = int(item.get("gstRateBps", 1800))
+    hsn = str(item.get("hsnCode", "95030090"))
+    image_url = str(item.get("imageUrl") or item.get("image") or "")
+
+    prod = session.query(Product).filter(
+        (Product.cloud_id == cloud_id) | (Product.code == code)
+    ).first()
+
+    if prod:
+        prod.name = name
+        prod.code = code
+        prod.price_per_unit = price
+        prod.category = category
+        prod.stock_qty = stock
+        prod.gst_rate_bps = gst_bps
+        prod.hsn_code = hsn
+        prod.cloud_id = cloud_id
+        if image_url:
+            prod.image_url = image_url
+    else:
+        new_prod = Product(
+            name=name,
+            code=code,
+            base_unit="Pieces",
+            price_per_unit=price,
+            category=category,
+            stock_qty=stock,
+            gst_rate_bps=gst_bps,
+            hsn_code=hsn,
+            cloud_id=cloud_id,
+            image_url=image_url
+        )
+        session.add(new_prod)
+
+    # Reconcile primary code and aliases
+    session.execute(text("UPDATE product_code_aliases SET is_primary = 0 WHERE cloud_id = :cloud_id"), {"cloud_id": cloud_id})
+    reconcile_alias(session, code, cloud_id, is_primary=True)
+    for alias in item.get("aliases", []):
+        if normalize_pos_code(alias) != code:
+            reconcile_alias(session, alias, cloud_id, is_primary=False)
 
 
 class ToyPopSyncClient:
@@ -92,7 +191,7 @@ class ToyPopSyncClient:
 
         req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=12) as response:
+            with urllib.request.urlopen(req, timeout=15) as response:
                 status = response.getcode()
                 raw = response.read().decode("utf-8")
                 return {"status": status, "data": json.loads(raw)}
@@ -119,7 +218,6 @@ class ToyPopSyncClient:
         res = self._make_request("/api/pos/bootstrap")
         if res.get("status") == 200:
             store = res["data"].get("store", {})
-            # Update local store profile settings automatically
             if store.get("name"):
                 SettingsModel.set_setting("store_name", store["name"])
             if store.get("phone"):
@@ -130,78 +228,89 @@ class ToyPopSyncClient:
         return {"success": False, "error": res.get("error", "Failed to connect")}
 
     def sync_catalog(self, limit=200):
-        """Downloads updated products and stock counts from ToyPop and updates local SQLite."""
-        endpoint = f"/api/pos/catalog?limit={limit}"
-        res = self._make_request(endpoint)
-        if res.get("status") != 200:
-            return {"success": False, "error": res.get("error", "Catalog request failed")}
+        """
+        Generation 2 Revision-based Catalog Synchronization Protocol:
+        Handles race-free full snapshots, incremental revision pagination with 200 ceiling,
+        and fail-closed alias updates.
+        """
+        current_generation = int(SettingsModel.get_setting("pos_sync_generation", "0") or 0)
+        current_sync_token = SettingsModel.get_setting("pos_sync_token", "0") or "0"
 
-        items = res["data"].get("items", [])
-        session = get_db()
-        synced_count = 0
-        new_count = 0
+        total_upserted = 0
+        total_removed = 0
+        has_more = True
+        iterations = 0
 
-        try:
-            for item in items:
-                cloud_id = item.get("id")
-                name = item.get("name")
-                code = item.get("barcode") or item.get("sku") or str(cloud_id)
-                price = float(item.get("priceRupees", (item.get("pricePaise", 0) / 100.0)))
-                category = item.get("category", "General")
-                stock = int(item.get("stock", 0))
-                gst_bps = int(item.get("gstRateBps", 1800))
-                hsn = str(item.get("hsnCode", "95030090"))
-                image_url = str(item.get("imageUrl") or item.get("image") or "")
+        while has_more and iterations < 50:
+            iterations += 1
+            endpoint = f"/api/pos/catalog?generation={current_generation}&sinceRevision={current_sync_token}&limit={limit}"
+            res = self._make_request(endpoint)
+            if res.get("status") != 200:
+                return {"success": False, "error": res.get("error", "Catalog sync request failed")}
 
-                # Try matching existing product by cloud_id or barcode/code
-                prod = session.query(Product).filter(
-                    (Product.cloud_id == cloud_id) | (Product.code == code)
-                ).first()
+            res_data = res.get("data", {})
+            mode = res_data.get("mode", "incremental")
+            server_gen = res_data.get("generation", 2)
+            sync_token = str(res_data.get("syncToken", "0"))
+            items = res_data.get("items", [])
+            removed_ids = res_data.get("removedCloudIds", [])
+            has_more = bool(res_data.get("hasMore", False))
 
-                if prod:
-                    prod.name = name
-                    prod.code = code
-                    prod.price_per_unit = price
-                    prod.category = category
-                    prod.stock_qty = stock
-                    prod.gst_rate_bps = gst_bps
-                    prod.hsn_code = hsn
-                    prod.cloud_id = cloud_id
-                    if image_url:
-                        prod.image_url = image_url
-                    synced_count += 1
+            session = get_db()
+            try:
+                if mode == "full":
+                    # Mandatory Post-Migration Full Sync Invariant:
+                    # Purge SQLite tables completely, populate snapshot, commit, THEN save token.
+                    session.execute(text("DELETE FROM product_code_aliases"))
+                    session.execute(text("DELETE FROM products"))
+
+                    for item in items:
+                        upsert_product_and_aliases(session, item)
+
+                    session.commit()
+
+                    # Atomic SQLite commit succeeded -> Persist new generation and syncToken
+                    SettingsModel.set_setting("pos_sync_generation", str(server_gen))
+                    SettingsModel.set_setting("pos_sync_token", sync_token)
+                    current_generation = server_gen
+                    current_sync_token = sync_token
+                    total_upserted += len(items)
+                    has_more = False  # Full sync returns complete state
                 else:
-                    new_prod = Product(
-                        name=name,
-                        code=code,
-                        base_unit="Pieces",
-                        price_per_unit=price,
-                        category=category,
-                        stock_qty=stock,
-                        gst_rate_bps=gst_bps,
-                        hsn_code=hsn,
-                        cloud_id=cloud_id,
-                        image_url=image_url
-                    )
-                    session.add(new_prod)
-                    new_count += 1
+                    # Incremental Batch Sync
+                    for item in items:
+                        upsert_product_and_aliases(session, item)
+                        total_upserted += 1
 
-            session.commit()
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            SettingsModel.set_setting("last_catalog_sync_date", today_str)
-            SettingsModel.set_setting("last_catalog_sync_time", time_str)
-            return {
-                "success": True,
-                "synced": synced_count,
-                "created": new_count,
-                "total": len(items)
-            }
-        except Exception as e:
-            session.rollback()
-            return {"success": False, "error": str(e)}
-        finally:
-            session.close()
+                    for cloud_id in removed_ids:
+                        session.execute(text("DELETE FROM products WHERE cloud_id = :cid"), {"cid": cloud_id})
+                        session.execute(text("DELETE FROM product_code_aliases WHERE cloud_id = :cid"), {"cid": cloud_id})
+                        total_removed += 1
+
+                    session.commit()
+
+                    # Persist advancing syncToken after successful commit
+                    SettingsModel.set_setting("pos_sync_generation", str(server_gen))
+                    SettingsModel.set_setting("pos_sync_token", sync_token)
+                    current_sync_token = sync_token
+            except Exception as e:
+                session.rollback()
+                return {"success": False, "error": f"SQLite sync error: {e}"}
+            finally:
+                session.close()
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        SettingsModel.set_setting("last_catalog_sync_date", today_str)
+        SettingsModel.set_setting("last_catalog_sync_time", time_str)
+
+        return {
+            "success": True,
+            "upserted": total_upserted,
+            "removed": total_removed,
+            "generation": current_generation,
+            "syncToken": current_sync_token,
+        }
 
     def is_first_time_sync(self) -> bool:
         """Returns True if local products database has 0 products or has never been synced."""
@@ -222,7 +331,7 @@ class ToyPopSyncClient:
         return last_date != today
 
     def sync_pending_bills(self):
-        """Pushes locally completed offline bills to ToyPop Cloud orders collection."""
+        """Pushes locally completed offline bills to ToyPop Cloud with explicit timezone-aware billedAt."""
         session = get_db()
         try:
             unsynced = session.query(Bill).filter(
@@ -236,14 +345,29 @@ class ToyPopSyncClient:
             errors = []
 
             for bill in unsynced:
-                # Build items payload
+                # Format timezone-aware billedAt (Asia/Kolkata +05:30)
+                billed_at_iso = None
+                try:
+                    dt_str = str(bill.date_time).strip()
+                    if "T" in dt_str:
+                        base_dt = dt_str.split("+")[0].split("Z")[0]
+                        billed_at_iso = f"{base_dt}+05:30"
+                    else:
+                        parsed_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+                        billed_at_iso = parsed_dt.strftime("%Y-%m-%dT%H:%M:%S+05:30")
+                except Exception:
+                    billed_at_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+05:30")
+
+                # Build items payload (capped at 50 items)
                 items_payload = []
-                for bi in bill.items:
+                for bi in bill.items[:50]:
+                    prod_cloud_id = bi.product.cloud_id if bi.product and bi.product.cloud_id else f"local_{bi.product_id}"
                     items_payload.append({
-                        "productId": bi.product.cloud_id if bi.product and bi.product.cloud_id else f"local_{bi.product_id}",
+                        "productId": prod_cloud_id,
                         "name": bi.product_name,
                         "sku": bi.product.code if bi.product and bi.product.code else str(bi.product_id),
-                        "quantity": int(bi.quantity),
+                        "barcode": bi.product.code if bi.product and bi.product.code else None,
+                        "quantity": min(int(bi.quantity), 500),
                         "unitPricePaise": int(round(bi.price * 100)),
                         "mrpPaise": int(round(bi.price * 100)),
                         "discountPaise": 0,
@@ -258,6 +382,7 @@ class ToyPopSyncClient:
                     "localBillId": f"BILL-{bill.id}-{bill.bill_number}",
                     "billNumber": bill.bill_number,
                     "terminalId": self.terminal_id,
+                    "billedAt": billed_at_iso,
                     "paymentMethod": clean_method,
                     "paymentStatus": "paid",
                     "customer": {
@@ -380,16 +505,15 @@ if HAS_PYQT:
 
                 if is_first:
                     self.sync_started.emit("First time setup: downloading product catalog from ToyPop Cloud...")
-                    res = self.client.sync_catalog(limit=250)
+                    res = self.client.sync_catalog(limit=200)
                     res["is_first_time"] = True
                     self.sync_completed.emit(res.get("success", False), res)
                 elif is_daily:
                     self.sync_started.emit("Daily update: synchronizing product catalog with ToyPop Cloud...")
-                    res = self.client.sync_catalog(limit=250)
+                    res = self.client.sync_catalog(limit=200)
                     res["is_daily"] = True
                     self.sync_completed.emit(res.get("success", False), res)
                 else:
                     self.sync_completed.emit(False, {"skipped": True, "reason": "already_synced_today"})
             except Exception as e:
                 self.sync_completed.emit(False, {"error": str(e)})
-
