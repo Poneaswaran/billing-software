@@ -303,7 +303,7 @@ class HeldBillsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Thangam Stores Billing")
+        self.update_window_title()
         self.resize(1200, 800)
         self.printer_manager = PrinterManager()
         self.cart = []
@@ -413,6 +413,14 @@ class MainWindow(QMainWindow):
             text = "⚪ ToyPop: Offline"
         self.status_cloud_lbl.setText(text)
         self.status_cloud_lbl.setStyleSheet(f"padding: 2px 10px; font-weight: bold; color: {color}; font-size: 11px;")
+
+    def update_window_title(self):
+        from app.models import SettingsModel
+        store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
+        if not store_name:
+            store_name = 'ToyPop Chennai'
+        title = f"{store_name} Billing" if "billing" not in store_name.lower() else store_name
+        self.setWindowTitle(title)
 
     def init_billing_tab(self):
         main_layout = QHBoxLayout(self.billing_tab)
@@ -1028,7 +1036,8 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         dlg = SettingsDialog(self)
         if dlg.exec():
-            # Reload Theme
+            # Reload Title & Theme
+            self.update_window_title()
             from app.models import SettingsModel
             from app.ui_styles import apply_theme_to_app
             theme = SettingsModel.get_setting('theme', 'Light')

@@ -218,7 +218,7 @@ class PrinterManager:
                 except Exception as e:
                     error_logger.error(f"Failed to print direct logo: {e}")
 
-            store_name = SettingsModel.get_setting('store_name', 'Thangam Stores')
+            store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
             store_address = SettingsModel.get_setting('store_address', '123 Main St, City')
             footer_text = SettingsModel.get_setting('receipt_footer', 'Thank you for shopping!')
 
@@ -264,7 +264,7 @@ class PrinterManager:
         if not printer_name:
             raise PrinterError("No Windows printer configured")
         
-        store_name = SettingsModel.get_setting('store_name', 'Thangam Stores')
+        store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
         store_address = SettingsModel.get_setting('store_address', '')
         store_phone = SettingsModel.get_setting('store_phone', '')
         footer_text = SettingsModel.get_setting('receipt_footer', 'Thank you for shopping!')
@@ -472,7 +472,7 @@ public class RawPrinter {{
             width, height = A4
             y = height - 50 * mm
 
-            store_name = SettingsModel.get_setting('store_name', 'Thangam Stores')
+            store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
             header_message = SettingsModel.get_setting('header_message', '')
             logo_path = SettingsModel.get_setting('shop_logo_path', '')
             
@@ -532,10 +532,11 @@ public class RawPrinter {{
             raise PrinterError("SMTP settings not configured.")
 
         try:
+            store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
             msg = MIMEMultipart()
             msg['From'] = smtp_user
             msg['To'] = recipient_email
-            msg['Subject'] = f"Receipt from Thangam Stores - {bill_data['bill_number']}"
+            msg['Subject'] = f"Receipt from {store_name} - {bill_data['bill_number']}"
 
             body = f"Thank you for shopping!\n\nBill No: {bill_data['bill_number']}\nTotal: {bill_data['grand_total']:.2f}"
             msg.attach(MIMEText(body, 'plain'))
@@ -574,7 +575,7 @@ public class RawPrinter {{
             
             c = canvas.Canvas(temp_file, pagesize=(label_width, label_height))
             
-            store_name = SettingsModel.get_setting('store_name', 'Thangam Stores')
+            store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
             price = product_data.get('price_per_unit', 0.0)
             name = product_data.get('name', 'Product')
             code = product_data.get('code', '')

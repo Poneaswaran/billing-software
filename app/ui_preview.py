@@ -72,7 +72,7 @@ class BillPreviewDialog(QDialog):
 
     def generate_text_preview(self):
         """Generate a text preview that matches the actual print output"""
-        store_name = SettingsModel.get_setting('store_name', 'Thangam Stores')
+        store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
         store_address = SettingsModel.get_setting('store_address', '')
         store_phone = SettingsModel.get_setting('store_phone', '')
         footer_text = SettingsModel.get_setting('receipt_footer', 'Thank you for shopping!')
@@ -203,7 +203,7 @@ class BillPreviewDialog(QDialog):
             from reportlab.pdfgen import canvas
             from reportlab.lib.units import mm
             
-            store_name = SettingsModel.get_setting('store_name', 'Thangam Stores')
+            store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
             store_address = SettingsModel.get_setting('store_address', '')
             store_phone = SettingsModel.get_setting('store_phone', '')
             footer_text = SettingsModel.get_setting('receipt_footer', 'Thank you for shopping!')

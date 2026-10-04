@@ -25,7 +25,7 @@ class SettingsDialog(QDialog):
         # Store Settings
         self.store_tab = QWidget()
         self.store_layout = QFormLayout()
-        self.store_name = QLineEdit(SettingsModel.get_setting('store_name', 'Thangam Stores'))
+        self.store_name = QLineEdit(SettingsModel.get_setting('store_name', 'ToyPop Chennai'))
         self.store_address = QLineEdit(SettingsModel.get_setting('store_address', ''))
         self.store_phone = QLineEdit(SettingsModel.get_setting('store_phone', ''))
         
