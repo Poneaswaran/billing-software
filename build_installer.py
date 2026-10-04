@@ -200,8 +200,13 @@ def run_pyinstaller():
     if not cap_file:
         print("[!] Warning: escpos capabilities.json not found in python environment.")
 
+    python_bin = sys.executable
+    venv_py = os.path.join(BASE_DIR, ".venv", "Scripts", "python.exe")
+    if os.path.exists(venv_py):
+        python_bin = venv_py
+
     cmd = [
-        sys.executable, "-m", "PyInstaller",
+        python_bin, "-m", "PyInstaller",
         "--noconfirm",
         "--clean",
         "--windowed",

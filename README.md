@@ -87,7 +87,7 @@ python run.py
 
 ## 📦 Building for Windows & Installation Wizard
 
-To build the complete **Windows Installation Wizard** (`ToyPopBilling_Setup_v1.0.2.exe`):
+To build the complete **Windows Installation Wizard** (`ToyPopBilling_Setup_v1.0.3.exe`):
 
 ```bash
 # Option 1: Using the master build script (recommended)
