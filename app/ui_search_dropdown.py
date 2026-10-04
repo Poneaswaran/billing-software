@@ -114,14 +114,27 @@ class ProductSearchDropdownPopup(QFrame):
 
     def __init__(self, parent_input=None):
         parent_window = parent_input.window() if parent_input else None
-        super().__init__(parent_window, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        super().__init__(
+            parent_window,
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.parent_input = parent_input
         self.products = []
         self.filtered_products = []
         self.toypop_connected = False
         self.theme = 'Light'
         self.last_hide_time = 0
+        self.user_navigated = False
         self.init_ui()
+
+    def keyPressEvent(self, event):
+        # Redirect any stray key events directly back to the search input
+        if self.parent_input:
+            self.parent_input.keyPressEvent(event)
+        else:
+            super().keyPressEvent(event)
 
     def hideEvent(self, event):
         self.last_hide_time = time.time()
@@ -259,6 +272,7 @@ class ProductSearchDropdownPopup(QFrame):
 
     def filter_products(self, query: str = ""):
         """Filters products by query. If query is empty, displays ALL products in local DB."""
+        self.user_navigated = False
         q = (query or "").strip().lower()
         if not q:
             self.filtered_products = list(self.products)
@@ -299,11 +313,13 @@ class ProductSearchDropdownPopup(QFrame):
         return None
 
     def select_next(self):
+        self.user_navigated = True
         row = self.list_widget.currentRow()
         if row < self.list_widget.count() - 1:
             self.list_widget.setCurrentRow(row + 1)
 
     def select_prev(self):
+        self.user_navigated = True
         row = self.list_widget.currentRow()
         if row > 0:
             self.list_widget.setCurrentRow(row - 1)
@@ -333,7 +349,30 @@ class ProductSearchLineEdit(QLineEdit):
             saved_theme = 'Light'
         self.apply_theme(saved_theme)
 
+        # Debounce filter timer: Allows high-speed barcode scanners (10-15ms/character)
+        # to type the entire barcode string without focus interruptions or UI stutter
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(75)
+        self._filter_timer.timeout.connect(self._do_filter)
+
         self.textChanged.connect(self._on_text_changed)
+        QTimer.singleShot(100, self._install_event_filters)
+
+    def _install_event_filters(self):
+        top_win = self.window()
+        if top_win and top_win != self:
+            top_win.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if hasattr(self, 'popup') and self.popup.isVisible():
+            if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.NonClientAreaMouseButtonPress):
+                pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+                if not self.rect().contains(self.mapFromGlobal(pos)) and not self.popup.rect().contains(self.popup.mapFromGlobal(pos)):
+                    self.popup.hide()
+            elif event.type() == QEvent.Type.WindowDeactivate:
+                self.popup.hide()
+        return super().eventFilter(watched, event)
 
     def apply_theme(self, theme_name: str = 'Light'):
         is_dark = (theme_name == 'Dark')
@@ -399,6 +438,15 @@ class ProductSearchLineEdit(QLineEdit):
         if event.reason() in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason):
             QTimer.singleShot(0, self.show_dropdown)
 
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        QTimer.singleShot(150, self._check_hide_on_focus_loss)
+
+    def _check_hide_on_focus_loss(self):
+        if not self.hasFocus() and hasattr(self, 'popup') and self.popup.isVisible():
+            if not self.popup.underMouse():
+                self.popup.hide()
+
     def show_dropdown(self):
         """Displays dropdown popup populated with all products in local database."""
         self.popup.filter_products(self.text())
@@ -414,13 +462,19 @@ class ProductSearchLineEdit(QLineEdit):
         self.popup.setGeometry(global_pos.x(), global_pos.y(), width, height)
         self.popup.show()
         self.popup.raise_()
+        # Keep focus firmly in the text input so continuous typing/scanning is never interrupted
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_text_changed(self, text: str):
+        self._filter_timer.start()
+
+    def _do_filter(self):
+        text = self.text()
         if self.hasFocus():
             self.popup.filter_products(text)
-            if not self.popup.isVisible():
-                QTimer.singleShot(0, self.show_dropdown)
-            else:
+            if not self.popup.isVisible() and text:
+                self.show_dropdown()
+            elif self.popup.isVisible():
                 height = min(420, max(100, len(self.popup.filtered_products) * 64 + 40))
                 self.popup.resize(self.popup.width(), height)
 
@@ -433,17 +487,29 @@ class ProductSearchLineEdit(QLineEdit):
                 self.popup.select_prev()
                 return
             elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                prod = self.popup.get_selected_product()
-                if prod:
-                    self._on_popup_product_selected(prod)
-                    return
+                self._filter_timer.stop()
+                if getattr(self.popup, 'user_navigated', False):
+                    prod = self.popup.get_selected_product()
+                    if prod:
+                        self._on_popup_product_selected(prod)
+                        return
+                # If user didn't use arrows (e.g. barcode scan or entered text + Enter):
+                self.popup.hide()
+                super().keyPressEvent(event)
+                return
             elif event.key() == Qt.Key.Key_Escape:
+                self._filter_timer.stop()
                 self.popup.hide()
                 return
+
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._filter_timer.stop()
+            self.popup.hide()
 
         super().keyPressEvent(event)
 
     def _on_popup_product_selected(self, product: dict):
+        self._filter_timer.stop()
         self.popup.hide()
         self.clear()
         self.product_selected.emit(product)

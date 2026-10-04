@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QGridLayout, QFrame, QMessageBox, QApplication,
     QSystemTrayIcon, QMenu, QStyle
 )
-from PyQt6.QtCore import Qt, QStringListModel, QTimer
+from PyQt6.QtCore import Qt, QStringListModel, QTimer, QEvent
 from PyQt6.QtGui import QAction, QKeySequence, QFont, QIcon
 
 from app.models import ProductModel, CustomerModel, BillModel, SettingsModel
@@ -322,6 +322,7 @@ class MainWindow(QMainWindow):
         self.load_customers()
         self.load_recent_bills()
         self.check_toypop_connection()
+        QTimer.singleShot(200, self.prod_search.setFocus)
 
         # Keyboard Shortcuts
         self.shortcut_f1 = QAction("Focus Search", self)
@@ -730,32 +731,67 @@ class MainWindow(QMainWindow):
         self.prod_search.clear()
         self.prod_search.setFocus()
 
+    def keyPressEvent(self, event):
+        # If user presses printable character while on billing tab and not in an input,
+        # redirect to product search (scanner auto-focus)
+        if hasattr(self, 'tabs') and self.tabs.currentIndex() == 0 and hasattr(self, 'prod_search'):
+            auto_focus = SettingsModel.get_setting('scanner_auto_focus', 'true').lower() == 'true'
+            if auto_focus:
+                text = event.text()
+                if text and text.isprintable() and not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)):
+                    self.prod_search.setFocus()
+                    self.prod_search.setText(self.prod_search.text() + text)
+                    return
+        super().keyPressEvent(event)
+
     def add_product_to_cart_manual(self):
         text = self.prod_search.text().strip()
         if not text:
             return
-            
-        # Try to find by code/barcode first (exact match)
-        found = False
+
+        # Strip optional scanner prefix if configured in settings
+        try:
+            prefix = SettingsModel.get_setting('scanner_prefix', '')
+            if prefix and text.startswith(prefix):
+                text = text[len(prefix):].strip()
+        except Exception:
+            pass
+
+        # 1. First check ProductModel for exact code, barcode, or alias match in DB
+        try:
+            p_match = ProductModel.get_product_by_code_or_alias(text)
+            if p_match:
+                self.add_to_cart(p_match)
+                self.prod_search.clear()
+                self.qty_input.setText("1")
+                self.prod_search.setFocus()
+                return
+        except Exception:
+            pass
+
+        # 2. Try exact match in loaded products list (code, barcode, aliases, or name)
+        t_lower = text.lower()
         for p in self.products:
-            if p['code'].lower() == text.lower() or p['name'].lower() == text.lower():
+            p_code = str(p.get('code', '')).lower()
+            p_name = str(p.get('name', '')).lower()
+            p_aliases = [str(a).lower() for a in p.get('aliases', [])]
+            if p_code == t_lower or p_name == t_lower or t_lower in p_aliases:
                 self.add_to_cart(p)
                 self.prod_search.clear()
                 self.qty_input.setText("1")
                 self.prod_search.setFocus()
-                found = True
-                break
-        
-        if not found:
-            # Try partial match in name or code
-            for p in self.products:
-                if text.lower() in p['name'].lower() or text.lower() in p['code'].lower():
-                    self.add_to_cart(p)
-                    self.prod_search.clear()
-                    self.qty_input.setText("1")
-                    self.prod_search.setFocus()
-                    found = True
-                    break
+                return
+
+        # 3. Fallback: partial match in name or code
+        for p in self.products:
+            p_code = str(p.get('code', '')).lower()
+            p_name = str(p.get('name', '')).lower()
+            if t_lower in p_name or t_lower in p_code:
+                self.add_to_cart(p)
+                self.prod_search.clear()
+                self.qty_input.setText("1")
+                self.prod_search.setFocus()
+                return
 
     def on_cart_item_clicked(self, item):
         pass
