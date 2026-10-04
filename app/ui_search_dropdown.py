@@ -68,8 +68,12 @@ class ProductDropdownItemWidget(QWidget):
         # Subtitle (Code / Barcode, Category, Stock)
         code = self.product.get('code', '')
         stock = self.product.get('stock_qty', 0)
-        category = self.product.get('category', 'General')
-        sub_text = f"SKU: {code}  •  Category: {category}  •  Stock: {stock}"
+        cats = self.product.get('categories')
+        if not cats:
+            raw_cat = self.product.get('category', 'General')
+            cats = [c.strip() for c in str(raw_cat or '').split(',') if c.strip()]
+        cat_display = ", ".join(cats) if cats else (self.product.get('category') or 'General')
+        sub_text = f"SKU: {code}  •  Category: {cat_display}  •  Stock: {stock}"
         self.lbl_sub = QLabel(sub_text)
         if self.is_dark:
             self.lbl_sub.setStyleSheet("font-size: 11px; color: #8892a0; background: transparent;")
@@ -264,6 +268,7 @@ class ProductSearchDropdownPopup(QFrame):
                 if q in p.get('name', '').lower()
                 or q in p.get('code', '').lower()
                 or q in p.get('category', '').lower()
+                or any(q in str(c).lower() for c in p.get('categories', []))
                 or any(q in str(alias).lower() for alias in p.get('aliases', []))
             ]
 

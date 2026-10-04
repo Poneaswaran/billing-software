@@ -109,7 +109,12 @@ def upsert_product_and_aliases(session, item: dict):
     name = str(item.get("name") or "Toy")
     code = normalize_pos_code(item.get("barcode") or item.get("sku") or cloud_id)
     price = float(item.get("priceRupees", (item.get("pricePaise", 0) / 100.0)))
-    category = str(item.get("category", "General"))
+    categories_raw = item.get("categories") or item.get("categoryNames")
+    if isinstance(categories_raw, list) and categories_raw:
+        category = ", ".join(str(c).strip() for c in categories_raw if str(c).strip()) or "General"
+    else:
+        category = str(item.get("category", "General")).strip() or "General"
+
     stock = int(item.get("stock", 0))
     gst_bps = int(item.get("gstRateBps", 1800))
     hsn = str(item.get("hsnCode", "95030090"))

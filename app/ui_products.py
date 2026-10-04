@@ -26,6 +26,7 @@ class ProductDialog(QDialog):
         
         self.price = QLineEdit(str(self.product['price_per_unit']) if self.product else "")
         self.category = QLineEdit(self.product['category'] if self.product else "General")
+        self.category.setPlaceholderText("e.g. Wooden Toys, STEM, Puzzles")
 
         layout.addRow("Name:", self.name)
         layout.addRow("Code:", self.code)
@@ -107,7 +108,7 @@ class ManageProductsDialog(QDialog):
         # Top Bar: Search and Add
         top_layout = QHBoxLayout()
         self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("🔍 Search by Name or Code...")
+        self.search_bar.setPlaceholderText("🔍 Search by Name, Code, or Category...")
         self.search_bar.textChanged.connect(self.search_products)
         
         btn_add = QPushButton("+ Add New Product")
@@ -157,8 +158,17 @@ class ManageProductsDialog(QDialog):
         self.update_table(self.products)
 
     def search_products(self):
-        query = self.search_bar.text().lower()
-        filtered = [p for p in self.products if query in p['name'].lower() or query in p['code'].lower()]
+        query = self.search_bar.text().strip().lower()
+        if not query:
+            self.update_table(self.products)
+            return
+        filtered = [
+            p for p in self.products
+            if query in p.get('name', '').lower()
+            or query in p.get('code', '').lower()
+            or query in p.get('category', '').lower()
+            or any(query in str(c).lower() for c in p.get('categories', []))
+        ]
         self.update_table(filtered)
 
     def update_table(self, products):

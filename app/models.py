@@ -67,7 +67,11 @@ class ProductModel:
         try:
             q_norm = str(query or "").strip().upper()
             products = session.query(Product).filter(
-                or_(Product.name.like(f'%{query}%'), Product.code.like(f'%{query}%'))
+                or_(
+                    Product.name.like(f'%{query}%'),
+                    Product.code.like(f'%{query}%'),
+                    Product.category.like(f'%{query}%')
+                )
             ).all()
             return [p.to_dict() for p in products]
         finally:

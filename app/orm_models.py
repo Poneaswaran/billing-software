@@ -19,6 +19,7 @@ class Product(Base):
     image_url = Column(String, nullable=True)
 
     def to_dict(self):
+        cats = [c.strip() for c in (self.category or '').split(',') if c.strip()]
         return {
             'id': self.id,
             'name': self.name,
@@ -26,6 +27,7 @@ class Product(Base):
             'base_unit': self.base_unit,
             'price_per_unit': self.price_per_unit,
             'category': self.category,
+            'categories': cats,
             'cloud_id': self.cloud_id,
             'stock_qty': self.stock_qty,
             'gst_rate_bps': self.gst_rate_bps,
