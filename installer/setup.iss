@@ -8,7 +8,7 @@
 ; ==============================================================================
 
 #define MyAppName "ToyPop POS & Billing"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "ToyPop Retail Systems"
 #define MyAppURL "https://toypop.in"
 #define MyAppExeName "ToyPopBilling.exe"

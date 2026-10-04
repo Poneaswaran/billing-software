@@ -188,7 +188,18 @@ def run_inno_setup(iscc_path):
         print("[ERROR] Inno Setup compilation failed!")
         sys.exit(res.returncode)
 
-    installer_file = os.path.join(INSTALLER_DIST_DIR, "ToyPopBilling_Setup_v1.0.0.exe")
+    # Detect version from ISS script
+    version = "1.0.1"
+    try:
+        with open(ISS_SCRIPT, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("#define MyAppVersion"):
+                    version = line.split('"')[1]
+                    break
+    except Exception:
+        pass
+
+    installer_file = os.path.join(INSTALLER_DIST_DIR, f"ToyPopBilling_Setup_v{version}.exe")
     if not os.path.exists(installer_file):
         # Find any .exe in installer folder
         exes = [f for f in os.listdir(INSTALLER_DIST_DIR) if f.endswith(".exe")]
