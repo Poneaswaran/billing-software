@@ -33,9 +33,9 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-AppMutex={#MyAppMutex}
-CloseApplications=yes
+CloseApplications=force
 CloseApplicationsFilter={#MyAppExeName}
+RestartApplications=no
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
 VersionInfoVersion={#MyAppVersion}
@@ -65,12 +65,33 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+// Automatically terminate any running instance of ToyPopBilling when setup launches
+function InitializeSetup(): Boolean;
+var
+  ErrorCode: Integer;
+begin
+  Result := True;
+  // Terminate any running foreground or pre-warmed background/tray instance so upgrade proceeds seamlessly
+  Exec('taskkill.exe', '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
+  Sleep(600);
+end;
+
+// Double-check and ensure all files are released before copying/extracting
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ErrorCode: Integer;
+begin
+  Result := '';
+  Exec('taskkill.exe', '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
+  Sleep(400);
+end;
+
 // Helper function to verify clean exit during uninstallation
 function InitializeUninstall(): Boolean;
 var
   ErrorCode: Integer;
 begin
   Result := True;
-  // If running, taskkill gracefully or let Inno Setup CloseApplications handle it
-  Exec('taskkill.exe', '/F /IM ' + '{#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
+  Exec('taskkill.exe', '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
+  Sleep(400);
 end;
