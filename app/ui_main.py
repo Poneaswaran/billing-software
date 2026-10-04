@@ -481,9 +481,15 @@ class MainWindow(QMainWindow):
 
         # Cart Table
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Product", "Qty", "Unit", "Price", "Total"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Product", "Qty", "Unit", "Price", "Total", "Action"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(5, 65)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.cellChanged.connect(self.on_cart_item_changed)
@@ -986,6 +992,35 @@ class MainWindow(QMainWindow):
             total_item = QTableWidgetItem(f"₹{item['total']:.2f}")
             total_item.setFlags(total_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 4, total_item)
+
+            # Delete Action Button with Trash Icon
+            btn_del = QPushButton()
+            btn_del.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+            btn_del.setToolTip(f"Remove {item['product_name']} from cart")
+            btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_del.setFixedSize(32, 28)
+            btn_del.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(231, 76, 60, 0.15);
+                    border: 1px solid #e74c3c;
+                    border-radius: 4px;
+                    padding: 2px;
+                }
+                QPushButton:hover {
+                    background-color: #e74c3c;
+                }
+                QPushButton:pressed {
+                    background-color: #c0392b;
+                }
+            """)
+            btn_del.clicked.connect(lambda _, it=item: self.remove_cart_item(it))
+
+            container = QWidget()
+            cell_layout = QHBoxLayout(container)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cell_layout.addWidget(btn_del)
+            self.table.setCellWidget(row, 5, container)
             
             subtotal += item['total']
         
@@ -1021,6 +1056,13 @@ class MainWindow(QMainWindow):
             self.update_cart_table()
         except ValueError:
             pass # Ignore invalid input
+
+    def remove_cart_item(self, item_to_remove):
+        """Removes a specific product from the active billing cart."""
+        if item_to_remove in self.cart:
+            self.cart.remove(item_to_remove)
+            self.update_cart_table()
+            self.prod_search.setFocus()
 
     def clear_cart(self):
         self.cart = []

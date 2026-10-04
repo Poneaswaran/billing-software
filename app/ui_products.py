@@ -130,13 +130,13 @@ class ManageProductsDialog(QDialog):
 
         # Action Buttons
         action_layout = QHBoxLayout()
-        btn_edit = QPushButton("Edit Selected")
+        btn_edit = QPushButton("✏️ Edit Selected")
         btn_edit.clicked.connect(self.edit_product)
         
         btn_print = QPushButton("🖨 Print Label")
         btn_print.clicked.connect(self.print_label)
         
-        btn_delete = QPushButton("Delete Selected")
+        btn_delete = QPushButton("🗑️ Delete Selected")
         btn_delete.setObjectName("dangerBtn")
         btn_delete.clicked.connect(self.delete_product)
         
