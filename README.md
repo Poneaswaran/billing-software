@@ -87,7 +87,7 @@ python run.py
 
 ## 📦 Building for Windows & Installation Wizard
 
-To build the complete **Windows Installation Wizard** (`ToyPopBilling_Setup_v1.0.3.exe`):
+To build the complete **Windows Installation Wizard** (`ToyPopBilling_Setup_v1.0.5.exe`):
 
 ```bash
 # Option 1: Using the master build script (recommended)
@@ -110,11 +110,34 @@ If you only need a raw portable build without an installer wizard:
 pyinstaller --noconfirm --onedir --windowed \
     --name "ToyPopBilling" \
     --icon "assets/icon.ico" \
-    --add-data "data;data" \
     --add-data "app;app" \
     --add-data "assets;assets" \
     run.py
 ```
+
+### POS customer sync
+
+Customers saved or edited in POS upload automatically to the website admin with
+the tag **Customer added by POS billing**. Offline saves remain in SQLite and
+retry when connected. Existing local customers are uploaded after upgrading.
+Future POS bills link to the synchronized customer record. Deploy the website's
+`/api/pos/customers` endpoint before installing this update. These records are
+customer contacts; they do not create website login accounts.
+
+### Updating an existing installation
+
+Run the new setup executable and choose **Yes** when asked to update ToyPop
+Billing. Choose **No** to leave the running application and its files untouched.
+Updates reuse the existing installation directory and preserve the local database,
+including bills, products, customers and settings. Database files are excluded
+from both the application bundle and the installer payload.
+
+Before replacing application files, setup backs up `thangam.db` and any SQLite
+recovery sidecars to `data\backups\before-update-<version>-<timestamp>` beside
+each existing database. Setup stops if backup fails. Existing installations
+require interactive confirmation, so silent updates are refused. Do not uninstall
+the previous version before updating.
+
 
 ## 🤝 Contributing
 

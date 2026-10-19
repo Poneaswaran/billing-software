@@ -212,7 +212,6 @@ def run_pyinstaller():
         "--windowed",
         "--onedir",
         "--name", "ToyPopBilling",
-        "--add-data", f"data{os.pathsep}data",
         "--add-data", f"app{os.pathsep}app",
     ]
 

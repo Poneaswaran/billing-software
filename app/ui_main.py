@@ -323,6 +323,7 @@ class MainWindow(QMainWindow):
         self.load_recent_bills()
         self.check_toypop_connection()
         QTimer.singleShot(200, self.prod_search.setFocus)
+        QTimer.singleShot(1500, self.queue_manual_item_sync)
 
         # Keyboard Shortcuts
         self.shortcut_f1 = QAction("Focus Search", self)
@@ -799,6 +800,30 @@ class MainWindow(QMainWindow):
                 self.prod_search.setFocus()
                 return
 
+        # Unknown name: add immediately, with no product-details dialog.
+        try:
+            product = ProductModel.add_manual_product(text)
+            self.add_to_cart(product)
+            self.load_products()
+            self.prod_search.clear()
+            self.qty_input.setText("1")
+            self.prod_search.setFocus()
+            self.queue_manual_item_sync()
+        except Exception as exc:
+            show_error(self, "Unable to add item", str(exc))
+
+    def queue_manual_item_sync(self):
+        from app.sync import SyncWorker
+        if not hasattr(self, '_manual_sync_timer'):
+            self._manual_sync_timer = QTimer(self)
+            self._manual_sync_timer.setInterval(60000)
+            self._manual_sync_timer.timeout.connect(self.queue_manual_item_sync)
+            self._manual_sync_timer.start()
+        if getattr(self, '_manual_sync_worker', None) and self._manual_sync_worker.isRunning():
+            return
+        self._manual_sync_worker = SyncWorker(mode="manual", parent=self)
+        self._manual_sync_worker.start()
+
     def on_cart_item_clicked(self, item):
         pass
 
@@ -941,6 +966,8 @@ class MainWindow(QMainWindow):
             self.conn_checker.wait(1000)
         if hasattr(self, 'daily_sync_worker') and self.daily_sync_worker and self.daily_sync_worker.isRunning():
             self.daily_sync_worker.wait(1000)
+        if getattr(self, '_manual_sync_worker', None) and self._manual_sync_worker.isRunning():
+            self._manual_sync_worker.wait()
         super().closeEvent(event)
 
     def add_to_cart(self, product):

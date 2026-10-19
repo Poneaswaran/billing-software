@@ -40,6 +40,7 @@ class CustomerDialog(QDialog):
             if success:
                 self.customer_id = self.customer['id']
                 self.customer_name = self.name.text()
+                self.queue_customer_sync()
                 self.accept()
             else:
                 show_error(self, "Error", "Could not update customer.")
@@ -49,9 +50,18 @@ class CustomerDialog(QDialog):
                 self.customer_id = cid
                 self.customer_name = self.name.text()
                 self.customer_phone = self.phone.text()
+                self.queue_customer_sync()
                 self.accept()
             else:
                 show_error(self, "Error", "Could not add customer. Phone might be duplicate.")
+
+    def queue_customer_sync(self):
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, 'queue_manual_item_sync'):
+                parent.queue_manual_item_sync()
+                return
+            parent = parent.parent()
 
 class ManageCustomersDialog(QDialog):
     def __init__(self, parent=None):

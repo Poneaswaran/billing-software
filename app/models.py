@@ -5,6 +5,33 @@ from datetime import datetime
 
 class ProductModel:
     @staticmethod
+    def add_manual_product(name):
+        """Persist a name-only item without requiring catalog details."""
+        from uuid import uuid4
+        name = name.strip()
+        if not name or len(name) > 255:
+            raise ValueError("Item name must contain 1 to 255 characters.")
+        session = get_db()
+        try:
+            existing = session.query(Product).filter(
+                Product.is_manual == 1, Product.name.collate('NOCASE') == name
+            ).first()
+            if existing:
+                return existing.to_dict()
+            identifier = f"manual_{uuid4().hex}"
+            product = Product(name=name, code=identifier, cloud_id=identifier,
+                              base_unit="pc", price_per_unit=0, category="Manual",
+                              gst_rate_bps=0, is_manual=1, manual_synced=0)
+            session.add(product)
+            session.commit()
+            return product.to_dict()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    @staticmethod
     def add_product(name, code, base_unit, price, category="General", image_url=None):
         session = get_db()
         try:
@@ -110,7 +137,7 @@ class CustomerModel:
     def add_customer(name, phone, address):
         session = get_db()
         try:
-            customer = Customer(name=name, phone=phone, address=address)
+            customer = Customer(name=name.strip(), phone=phone.strip(), address=(address or '').strip())
             session.add(customer)
             session.commit()
             return customer.id
@@ -149,6 +176,7 @@ class CustomerModel:
                 customer.name = name
                 customer.phone = phone
                 customer.address = address
+                customer.sync_version = (customer.sync_version or 1) + 1
                 session.commit()
                 return True
             return False

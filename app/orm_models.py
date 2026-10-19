@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Tex
 from sqlalchemy.orm import relationship
 from app.db import Base
 from datetime import datetime
+from uuid import uuid4
 
 class Product(Base):
     __tablename__ = 'products'
@@ -17,6 +18,8 @@ class Product(Base):
     gst_rate_bps = Column(Integer, default=1800)
     hsn_code = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
+    is_manual = Column(Integer, default=0)
+    manual_synced = Column(Integer, default=0)
 
     def to_dict(self):
         cats = [c.strip() for c in (self.category or '').split(',') if c.strip()]
@@ -32,7 +35,8 @@ class Product(Base):
             'stock_qty': self.stock_qty,
             'gst_rate_bps': self.gst_rate_bps,
             'hsn_code': self.hsn_code,
-            'image_url': self.image_url
+            'image_url': self.image_url,
+            'is_manual': bool(self.is_manual)
         }
 
 class Customer(Base):
@@ -42,13 +46,19 @@ class Customer(Base):
     name = Column(String, nullable=False)
     phone = Column(String, unique=True)
     address = Column(String)
+    sync_id = Column(String, default=lambda: f"pos_customer_{uuid4().hex}")
+    cloud_id = Column(String, nullable=True)
+    sync_version = Column(Integer, default=1)
+    synced_version = Column(Integer, default=0)
 
     def to_dict(self):
         return {
             'id': self.id,
             'name': self.name,
             'phone': self.phone,
-            'address': self.address
+            'address': self.address,
+            'cloud_id': self.cloud_id,
+            'sync_id': self.sync_id
         }
 
 class Bill(Base):

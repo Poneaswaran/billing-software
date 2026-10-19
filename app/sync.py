@@ -4,7 +4,7 @@ import urllib.error
 from datetime import datetime
 from sqlalchemy import text
 from app.db import get_db, init_db, DB_PATH
-from app.orm_models import Product, Bill, BillItem, ProductCodeAlias
+from app.orm_models import Product, Bill, BillItem, ProductCodeAlias, Customer
 from app.models import SettingsModel
 
 try:
@@ -24,6 +24,9 @@ def ensure_db_columns():
             # Check products columns
             res = conn.execute(text("PRAGMA table_info(products)")).fetchall()
             existing_product_cols = [r[1] for r in res]
+            for column in ('is_manual', 'manual_synced'):
+                if column not in existing_product_cols:
+                    conn.execute(text(f"ALTER TABLE products ADD COLUMN {column} INTEGER DEFAULT 0"))
             
             if 'cloud_id' not in existing_product_cols:
                 conn.execute(text("ALTER TABLE products ADD COLUMN cloud_id VARCHAR"))
@@ -36,6 +39,16 @@ def ensure_db_columns():
             if 'image_url' not in existing_product_cols:
                 conn.execute(text("ALTER TABLE products ADD COLUMN image_url VARCHAR"))
                 
+            # Add customer sync metadata without replacing any existing records.
+            customer_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(customers)")).fetchall()]
+            for column, definition in (
+                ('sync_id', 'VARCHAR'), ('cloud_id', 'VARCHAR'),
+                ('sync_version', 'INTEGER DEFAULT 1'), ('synced_version', 'INTEGER DEFAULT 0'),
+            ):
+                if column not in customer_cols:
+                    conn.execute(text(f"ALTER TABLE customers ADD COLUMN {column} {definition}"))
+            conn.execute(text("UPDATE customers SET sync_id = 'pos_customer_' || lower(hex(randomblob(16))) WHERE sync_id IS NULL OR sync_id = ''"))
+
             # Check bills columns
             res_bills = conn.execute(text("PRAGMA table_info(bills)")).fetchall()
             existing_bill_cols = [r[1] for r in res_bills]
@@ -267,7 +280,7 @@ class ToyPopSyncClient:
                     # Mandatory Post-Migration Full Sync Invariant:
                     # Purge SQLite tables completely, populate snapshot, commit, THEN save token.
                     session.execute(text("DELETE FROM product_code_aliases"))
-                    session.execute(text("DELETE FROM products"))
+                    session.execute(text("DELETE FROM products WHERE COALESCE(is_manual, 0) = 0"))
 
                     for item in items:
                         upsert_product_and_aliases(session, item)
@@ -337,6 +350,8 @@ class ToyPopSyncClient:
 
     def sync_pending_bills(self):
         """Pushes locally completed offline bills to ToyPop Cloud with explicit timezone-aware billedAt."""
+        self.sync_manual_items()
+        self.sync_pending_customers()
         session = get_db()
         try:
             unsynced = session.query(Bill).filter(
@@ -350,6 +365,12 @@ class ToyPopSyncClient:
             errors = []
 
             for bill in unsynced:
+                if bill.customer and (
+                    not bill.customer.cloud_id or
+                    (bill.customer.synced_version or 0) < (bill.customer.sync_version or 1)
+                ):
+                    errors.append(f"Bill {bill.bill_number}: customer is waiting to sync")
+                    continue
                 # Format timezone-aware billedAt (Asia/Kolkata +05:30)
                 billed_at_iso = None
                 try:
@@ -369,15 +390,16 @@ class ToyPopSyncClient:
                     prod_cloud_id = bi.product.cloud_id if bi.product and bi.product.cloud_id else f"local_{bi.product_id}"
                     items_payload.append({
                         "productId": prod_cloud_id,
+                        "isManual": bool(bi.product and bi.product.is_manual),
                         "name": bi.product_name,
                         "sku": bi.product.code if bi.product and bi.product.code else str(bi.product_id),
-                        "barcode": bi.product.code if bi.product and bi.product.code else None,
+                        "barcode": bi.product.code if bi.product and bi.product.code else "",
                         "quantity": min(int(bi.quantity), 500),
                         "unitPricePaise": int(round(bi.price * 100)),
                         "mrpPaise": int(round(bi.price * 100)),
                         "discountPaise": 0,
                         "gstRateBps": getattr(bi.product, 'gst_rate_bps', 1800) if bi.product else 1800,
-                        "hsnCode": getattr(bi.product, 'hsn_code', '95030090') if bi.product else "95030090"
+                        "hsnCode": (getattr(bi.product, 'hsn_code', None) or "") if bi.product else ""
                     })
 
                 method = (bill.payment_method or "Cash").lower()
@@ -391,6 +413,7 @@ class ToyPopSyncClient:
                     "paymentMethod": clean_method,
                     "paymentStatus": "paid",
                     "customer": {
+                        "localCustomerId": bill.customer.sync_id if bill.customer else None,
                         "name": bill.customer.name if bill.customer else "Walk-in Customer",
                         "phone": bill.customer.phone if bill.customer else None
                     },
@@ -422,6 +445,83 @@ class ToyPopSyncClient:
         except Exception as e:
             session.rollback()
             return {"success": False, "error": str(e)}
+        finally:
+            session.close()
+
+    def sync_pending_customers(self):
+        """Upload durable customer snapshots, including customers saved without a bill."""
+        from uuid import uuid4
+        session = get_db()
+        try:
+            pending = session.query(Customer).filter(
+                (Customer.cloud_id == None) |
+                (Customer.synced_version < Customer.sync_version)
+            ).all()
+            snapshots = []
+            for customer in pending:
+                if not customer.sync_id:
+                    customer.sync_id = f"pos_customer_{uuid4().hex}"
+                snapshots.append({
+                    'id': customer.id,
+                    'localCustomerId': customer.sync_id,
+                    'version': customer.sync_version or 1,
+                    'name': customer.name,
+                    'phone': customer.phone or '',
+                    'address': customer.address or '',
+                })
+            # Save stable identifiers before sending anything to the server.
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            return {'success': False, 'error': str(exc)}
+        finally:
+            session.close()
+
+        synced = 0
+        errors = []
+        for snapshot in snapshots:
+            payload = {key: value for key, value in snapshot.items() if key != 'id'}
+            response = self._make_request('/api/pos/customers', method='POST', data=payload)
+            data = response.get('data', {})
+            if response.get('status') not in (200, 201) or not data.get('success') or not data.get('customerId'):
+                errors.append(str(response.get('error', 'Customer upload failed')))
+                continue
+            session = get_db()
+            try:
+                customer = session.get(Customer, snapshot['id'])
+                if customer:
+                    customer.cloud_id = data['customerId']
+                    # A concurrent edit keeps a higher version pending for the next retry.
+                    customer.synced_version = max(customer.synced_version or 0, snapshot['version'])
+                    session.commit()
+                synced += 1
+            except Exception as exc:
+                session.rollback()
+                errors.append(str(exc))
+            finally:
+                session.close()
+        return {'success': not errors, 'synced': synced, 'errors': errors}
+
+    def sync_manual_items(self):
+        """Retry durable name-only uploads; the server makes retries idempotent."""
+        session = get_db()
+        errors = []
+        try:
+            for product in session.query(Product).filter(
+                Product.is_manual == 1, Product.manual_synced == 0
+            ).all():
+                result = self._make_request("/api/pos/manual-items", method="POST", data={
+                    "localItemId": product.cloud_id, "name": product.name,
+                })
+                if result.get("status") in (200, 201):
+                    product.manual_synced = 1
+                else:
+                    errors.append(str(result.get("error", "Upload failed")))
+            session.commit()
+            return {"success": not errors, "errors": errors}
+        except Exception as exc:
+            session.rollback()
+            return {"success": False, "error": str(exc)}
         finally:
             session.close()
 
@@ -460,6 +560,11 @@ if HAS_PYQT:
                 elif self.mode == "bills":
                     self.progress.emit("Uploading offline retail bills...")
                     res = self.client.sync_pending_bills()
+                elif self.mode == "manual":
+                    items = self.client.sync_manual_items()
+                    customers = self.client.sync_pending_customers()
+                    res = {'success': items.get('success', False) and customers.get('success', False),
+                           'items': items, 'customers': customers}
                 else:
                     self.progress.emit("Synchronizing catalog & uploading bills...")
                     res = self.client.full_sync()
