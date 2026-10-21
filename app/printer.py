@@ -220,10 +220,16 @@ class PrinterManager:
 
             store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
             store_address = SettingsModel.get_setting('store_address', '123 Main St, City')
+            store_phone = SettingsModel.get_setting('store_phone', '')
+            store_website = SettingsModel.get_setting('store_website', '')
             footer_text = SettingsModel.get_setting('receipt_footer', 'Thank you for shopping!')
 
             self.printer.text(f"{store_name}\n")
             self.printer.text(f"{store_address}\n")
+            if store_phone:
+                self.printer.text(f"Phone: {store_phone}\n")
+            if store_website:
+                self.printer.text(f"{store_website}\n")
             self.printer.text(f"Date: {bill_data['date_time']}\n")
             self.printer.text(f"Bill No: {bill_data['bill_number']}\n")
             self.printer.text(f"Customer: {bill_data.get('customer_name', 'Walk-in')}\n")
@@ -267,6 +273,7 @@ class PrinterManager:
         store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
         store_address = SettingsModel.get_setting('store_address', '')
         store_phone = SettingsModel.get_setting('store_phone', '')
+        store_website = SettingsModel.get_setting('store_website', '')
         footer_text = SettingsModel.get_setting('receipt_footer', 'Thank you for shopping!')
         
         # Get paper width setting
@@ -294,6 +301,8 @@ class PrinterManager:
                 lines.append(f"{store_address:^{WIDTH}}")
         if store_phone:
             lines.append(f"{'Ph: ' + store_phone:^{WIDTH}}")
+        if store_website:
+            lines.append(f"{store_website[:WIDTH]:^{WIDTH}}")
         lines.append("=" * WIDTH)
         if spacing:
             lines.append(spacing)

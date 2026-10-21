@@ -75,6 +75,7 @@ class BillPreviewDialog(QDialog):
         store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
         store_address = SettingsModel.get_setting('store_address', '')
         store_phone = SettingsModel.get_setting('store_phone', '')
+        store_website = SettingsModel.get_setting('store_website', '')
         footer_text = SettingsModel.get_setting('receipt_footer', 'Thank you for shopping!')
         
         # Get paper settings
@@ -111,6 +112,8 @@ class BillPreviewDialog(QDialog):
                 lines.append(f"{store_address:^{WIDTH}}")
         if store_phone:
             lines.append(f"{'Ph: ' + store_phone:^{WIDTH}}")
+        if store_website:
+            lines.append(f"{store_website[:WIDTH]:^{WIDTH}}")
         lines.append("=" * WIDTH)
         if spacing:
             lines.append(spacing)
@@ -206,6 +209,7 @@ class BillPreviewDialog(QDialog):
             store_name = SettingsModel.get_setting('store_name', 'ToyPop Chennai')
             store_address = SettingsModel.get_setting('store_address', '')
             store_phone = SettingsModel.get_setting('store_phone', '')
+            store_website = SettingsModel.get_setting('store_website', '')
             footer_text = SettingsModel.get_setting('receipt_footer', 'Thank you for shopping!')
             
             # 80mm width receipt paper (80mm x variable height)
@@ -248,6 +252,11 @@ class BillPreviewDialog(QDialog):
             if store_phone:
                 c.setFont("Helvetica", 8)
                 c.drawCentredString(center, y, f"Phone: {store_phone}")
+                y -= 4 * mm
+
+            if store_website:
+                c.setFont("Helvetica", 8)
+                c.drawCentredString(center, y, store_website)
                 y -= 4 * mm
             
             # Separator

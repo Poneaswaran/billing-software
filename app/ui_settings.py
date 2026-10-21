@@ -28,6 +28,8 @@ class SettingsDialog(QDialog):
         self.store_name = QLineEdit(SettingsModel.get_setting('store_name', 'ToyPop Chennai'))
         self.store_address = QLineEdit(SettingsModel.get_setting('store_address', ''))
         self.store_phone = QLineEdit(SettingsModel.get_setting('store_phone', ''))
+        self.store_website = QLineEdit(SettingsModel.get_setting('store_website', ''))
+        self.store_website.setPlaceholderText("e.g. www.toypop.in")
         
         self.header_message = QLineEdit(SettingsModel.get_setting('header_message', ''))
         self.header_message.setPlaceholderText("Message on top of receipt")
@@ -50,6 +52,7 @@ class SettingsDialog(QDialog):
         self.store_layout.addRow("Store Name:", self.store_name)
         self.store_layout.addRow("Address:", self.store_address)
         self.store_layout.addRow("Phone:", self.store_phone)
+        self.store_layout.addRow("Website:", self.store_website)
         self.store_layout.addRow("Header Msg:", self.header_message)
         self.store_layout.addRow("Logo:", logo_row)
         self.store_layout.addRow("", self.logo_preview_lbl)
@@ -433,6 +436,7 @@ class SettingsDialog(QDialog):
         SettingsModel.set_setting('store_name', self.store_name.text())
         SettingsModel.set_setting('store_address', self.store_address.text())
         SettingsModel.set_setting('store_phone', self.store_phone.text())
+        SettingsModel.set_setting('store_website', self.store_website.text().strip())
         SettingsModel.set_setting('header_message', self.header_message.text())
         SettingsModel.set_setting('shop_logo_path', self.logo_path.text())
         

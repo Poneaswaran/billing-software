@@ -242,6 +242,65 @@ class BillModel:
             session.close()
 
     @staticmethod
+    def get_bill_by_id(bill_id):
+        session = get_db()
+        try:
+            bill = session.query(Bill).get(bill_id)
+            return bill.to_dict() if bill else None
+        finally:
+            session.close()
+
+    @staticmethod
+    def get_bill_by_number(bill_number):
+        session = get_db()
+        try:
+            bill = session.query(Bill).filter(Bill.bill_number == bill_number).first()
+            return bill.to_dict() if bill else None
+        finally:
+            session.close()
+
+    @staticmethod
+    def update_bill(bill_id, bill_data, items):
+        session = get_db()
+        try:
+            bill = session.query(Bill).get(bill_id)
+            if not bill:
+                raise ValueError(f"Bill #{bill_id} not found")
+            bill.customer_id = bill_data.get('customer_id')
+            bill.subtotal = bill_data['subtotal']
+            bill.tax_percent = bill_data.get('tax_percent', 0)
+            bill.tax_amount = bill_data.get('tax_amount', 0)
+            bill.discount_amount = bill_data.get('discount_amount', 0)
+            bill.grand_total = bill_data['grand_total']
+            if bill_data.get('payment_method'):
+                bill.payment_method = bill_data['payment_method']
+            if bill_data.get('date_time'):
+                bill.date_time = bill_data['date_time']
+            bill.synced = 0
+
+            # Delete old items and insert updated items
+            session.query(BillItem).filter(BillItem.bill_id == bill_id).delete()
+            for item in items:
+                bill_item = BillItem(
+                    bill_id=bill.id,
+                    product_id=item['product_id'],
+                    product_name=item['product_name'],
+                    quantity=item['quantity'],
+                    unit=item['unit'],
+                    price=item['price'],
+                    total=item['total']
+                )
+                session.add(bill_item)
+
+            session.commit()
+            return bill.id
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    @staticmethod
     def get_recent_bills(limit=10):
         session = get_db()
         try:

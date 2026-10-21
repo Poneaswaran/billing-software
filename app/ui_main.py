@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
     QTableWidgetItem, QLineEdit, QLabel, QPushButton, QComboBox, 
     QDialog, QFormLayout, QCompleter, QHeaderView, QSplitter, 
-    QListWidget, QGridLayout, QFrame, QMessageBox, QApplication,
+    QListWidget, QListWidgetItem, QGridLayout, QFrame, QMessageBox, QApplication,
     QSystemTrayIcon, QMenu, QStyle
 )
 from PyQt6.QtCore import Qt, QStringListModel, QTimer, QEvent
@@ -300,6 +300,140 @@ class HeldBillsDialog(QDialog):
             self.selected_bill = next((b for b in self.bills if b['id'] == bill_id), None)
             self.accept()
 
+class RecentBillActionDialog(QDialog):
+    """Modal dialog opened when clicking a recent bill: provides Preview Bill, Add More Items, and Close."""
+    def __init__(self, parent, bill_data, items):
+        super().__init__(parent)
+        self.bill_data = bill_data
+        self.items = items or []
+        self.action_selected = None  # 'preview', 'add_items', or None
+        self.setWindowTitle(f"Recent Bill - {bill_data.get('bill_number', 'N/A')}")
+        self.resize(540, 520)
+        self.setModal(True)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        # Header Details Card
+        card = QFrame()
+        card.setObjectName("recentBillCard")
+        card.setStyleSheet("""
+            QFrame#recentBillCard {
+                border: 1px solid rgba(127, 143, 166, 0.4);
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        card_layout = QGridLayout(card)
+        card_layout.setHorizontalSpacing(14)
+        card_layout.setVerticalSpacing(8)
+
+        title_lbl = QLabel(f"🧾 Bill: {self.bill_data.get('bill_number', 'N/A')}")
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #0097e6;")
+        card_layout.addWidget(title_lbl, 0, 0, 1, 2)
+
+        cust_name = self.bill_data.get('customer_name') or 'Walk-in Customer'
+        cust_phone = self.bill_data.get('customer_phone') or ''
+        cust_str = f"{cust_name} ({cust_phone})" if cust_phone else cust_name
+
+        lbl_cust_key = QLabel("Customer:")
+        lbl_cust_key.setStyleSheet("font-weight: bold;")
+        lbl_cust_val = QLabel(cust_str)
+        card_layout.addWidget(lbl_cust_key, 1, 0)
+        card_layout.addWidget(lbl_cust_val, 1, 1)
+
+        lbl_dt_key = QLabel("Date / Time:")
+        lbl_dt_key.setStyleSheet("font-weight: bold;")
+        lbl_dt_val = QLabel(str(self.bill_data.get('date_time', '')))
+        card_layout.addWidget(lbl_dt_key, 2, 0)
+        card_layout.addWidget(lbl_dt_val, 2, 1)
+
+        lbl_pay_key = QLabel("Payment:")
+        lbl_pay_key.setStyleSheet("font-weight: bold;")
+        lbl_pay_val = QLabel(str(self.bill_data.get('payment_method', 'Cash')))
+        card_layout.addWidget(lbl_pay_key, 3, 0)
+        card_layout.addWidget(lbl_pay_val, 3, 1)
+
+        lbl_tot_key = QLabel("Grand Total:")
+        lbl_tot_key.setStyleSheet("font-weight: bold;")
+        lbl_tot_val = QLabel(f"₹{self.bill_data.get('grand_total', 0.0):.2f}")
+        lbl_tot_val.setStyleSheet("font-size: 16px; font-weight: bold; color: #27ae60;")
+        card_layout.addWidget(lbl_tot_key, 4, 0)
+        card_layout.addWidget(lbl_tot_val, 4, 1)
+
+        layout.addWidget(card)
+
+        # Items Table
+        lbl_items = QLabel(f"📦 Bill Items ({len(self.items)})")
+        lbl_items.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(lbl_items)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Product", "Qty", "Price", "Total"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setRowCount(len(self.items))
+
+        for row, item in enumerate(self.items):
+            self.table.setItem(row, 0, QTableWidgetItem(str(item.get('product_name', ''))))
+            self.table.setItem(row, 1, QTableWidgetItem(f"{item.get('quantity', 0)} {item.get('unit', '')}"))
+            self.table.setItem(row, 2, QTableWidgetItem(f"₹{item.get('price', 0.0):.2f}"))
+            self.table.setItem(row, 3, QTableWidgetItem(f"₹{item.get('total', 0.0):.2f}"))
+
+        layout.addWidget(self.table)
+
+        # Discount & Subtotal info if applicable
+        disc_amt = float(self.bill_data.get('discount_amount', 0.0) or 0.0)
+        if disc_amt > 0:
+            lbl_disc_info = QLabel(f"Subtotal: ₹{self.bill_data.get('subtotal', 0.0):.2f}   |   Discount: -₹{disc_amt:.2f}")
+            lbl_disc_info.setAlignment(Qt.AlignmentFlag.AlignRight)
+            lbl_disc_info.setStyleSheet("color: #e67e22; font-weight: bold; font-size: 12px;")
+            layout.addWidget(lbl_disc_info)
+
+        # Action Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        btn_close = QPushButton("✕ Close")
+        btn_close.setMinimumHeight(40)
+        btn_close.clicked.connect(self.reject)
+
+        btn_preview = QPushButton("👁 Preview Bill")
+        btn_preview.setObjectName("btnPreview")
+        btn_preview.setMinimumHeight(40)
+        btn_preview.clicked.connect(self.preview_bill)
+
+        btn_add_items = QPushButton("➕ Add More Items")
+        btn_add_items.setObjectName("primaryBtn")
+        btn_add_items.setMinimumHeight(40)
+        btn_add_items.clicked.connect(self.add_more_items)
+
+        btn_layout.addWidget(btn_close)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_preview)
+        btn_layout.addWidget(btn_add_items)
+
+        layout.addLayout(btn_layout)
+
+    def preview_bill(self):
+        parent = self.parent()
+        printer_mgr = getattr(parent, 'printer_manager', None)
+        preview_dlg = BillPreviewDialog(self, self.bill_data, self.items, printer_mgr)
+        preview_dlg.exec()
+
+    def add_more_items(self):
+        self.action_selected = 'add_items'
+        self.accept()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -308,6 +442,8 @@ class MainWindow(QMainWindow):
         self.printer_manager = PrinterManager()
         self.cart = []
         self.current_customer = None
+        self.editing_bill_id = None
+        self.editing_bill_number = None
         self.toypop_connected = False
         self.conn_checker = None
         self.daily_sync_worker = None
@@ -338,7 +474,7 @@ class MainWindow(QMainWindow):
 
         self.shortcut_f3 = QAction("Focus Discount", self)
         self.shortcut_f3.setShortcut("F3")
-        self.shortcut_f3.triggered.connect(self.discount_input.setFocus)
+        self.shortcut_f3.triggered.connect(self.focus_discount)
         self.addAction(self.shortcut_f3)
 
     def init_ui(self):
@@ -480,6 +616,51 @@ class MainWindow(QMainWindow):
         prod_layout.addWidget(btn_add_prod)
         billing_layout.addWidget(prod_group)
 
+        # Editing Bill Notification Banner (Shown when adding items to recent bill)
+        self.banner_editing = QFrame()
+        self.banner_editing.setObjectName("editingBanner")
+        self.banner_editing.setStyleSheet("""
+            QFrame#editingBanner {
+                background-color: #fef3c7;
+                border: 1.5px solid #f59e0b;
+                border-radius: 8px;
+                padding: 6px 12px;
+            }
+            QLabel#editingInfo {
+                color: #92400e;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton#btnCancelEdit {
+                background-color: #ef4444;
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 4px 10px;
+                border: none;
+            }
+            QPushButton#btnCancelEdit:hover {
+                background-color: #dc2626;
+            }
+        """)
+        banner_layout = QHBoxLayout(self.banner_editing)
+        banner_layout.setContentsMargins(6, 4, 6, 4)
+        
+        self.lbl_editing_info = QLabel("")
+        self.lbl_editing_info.setObjectName("editingInfo")
+        btn_cancel_edit = QPushButton("✕ Cancel Edit")
+        btn_cancel_edit.setObjectName("btnCancelEdit")
+        btn_cancel_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel_edit.clicked.connect(self.cancel_bill_edit)
+        
+        banner_layout.addWidget(self.lbl_editing_info)
+        banner_layout.addStretch()
+        banner_layout.addWidget(btn_cancel_edit)
+        
+        self.banner_editing.setVisible(False)
+        billing_layout.addWidget(self.banner_editing)
+
         # Cart Table
         self.table = QTableWidget()
         self.table.setColumnCount(6)
@@ -509,11 +690,26 @@ class MainWindow(QMainWindow):
         self.lbl_tax = QLabel("0.00")
         self.lbl_tax.setAlignment(Qt.AlignmentFlag.AlignRight)
         
+        # Discount input with Number (₹) or Percentage (%) selector
+        discount_box = QHBoxLayout()
+        discount_box.setContentsMargins(0, 0, 0, 0)
+        discount_box.setSpacing(6)
+
         self.discount_input = QLineEdit("0")
-        self.discount_input.setPlaceholderText("% [F3]")
-        self.discount_input.setFixedWidth(50)
+        self.discount_input.setPlaceholderText("0 [F3]")
+        self.discount_input.setFixedWidth(70)
         self.discount_input.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.discount_input.textChanged.connect(self.update_cart_table)
+
+        self.discount_type = QComboBox()
+        self.discount_type.addItems(["%", "₹"])
+        self.discount_type.setFixedWidth(54)
+        self.discount_type.setToolTip("Discount Mode: Percentage (%) or Amount in Rupees (₹)")
+        self.discount_type.currentIndexChanged.connect(self.update_cart_table)
+
+        discount_box.addStretch()
+        discount_box.addWidget(self.discount_input)
+        discount_box.addWidget(self.discount_type)
         
         self.lbl_discount_amt = QLabel("0.00")
         self.lbl_discount_amt.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -524,7 +720,7 @@ class MainWindow(QMainWindow):
         
         totals_layout.addRow("Subtotal:", self.lbl_subtotal)
         totals_layout.addRow("Tax:", self.lbl_tax)
-        totals_layout.addRow("Discount (%):", self.discount_input)
+        totals_layout.addRow("Discount:", discount_box)
         totals_layout.addRow("Discount Amt:", self.lbl_discount_amt)
         totals_layout.addRow("Grand Total:", self.lbl_grand_total)
         billing_layout.addWidget(totals_frame)
@@ -541,14 +737,14 @@ class MainWindow(QMainWindow):
         btn_clear.setMinimumHeight(50)
         btn_clear.clicked.connect(self.clear_cart)
         
-        btn_print = QPushButton("Complete & Print (F12)")
-        btn_print.setObjectName("primaryBtn")
-        btn_print.setMinimumHeight(50)
-        btn_print.clicked.connect(self.process_bill)
+        self.btn_print = QPushButton("Complete & Print (F12)")
+        self.btn_print.setObjectName("primaryBtn")
+        self.btn_print.setMinimumHeight(50)
+        self.btn_print.clicked.connect(self.process_bill)
         
         actions_layout.addWidget(btn_hold)
         actions_layout.addWidget(btn_clear)
-        actions_layout.addWidget(btn_print, 2)
+        actions_layout.addWidget(self.btn_print, 2)
         billing_layout.addLayout(actions_layout)
 
         # Right Side: Sidebar (Recent Bills & Quick Products)
@@ -578,6 +774,8 @@ class MainWindow(QMainWindow):
         sidebar_layout.addLayout(recent_header_layout)
         
         self.recent_list = QListWidget()
+        self.recent_list.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.recent_list.itemClicked.connect(self.on_recent_bill_clicked)
         sidebar_layout.addWidget(self.recent_list)
         
         # Product Management
@@ -616,6 +814,10 @@ class MainWindow(QMainWindow):
     def focus_search(self):
         self.cust_search.setFocus()
         self.cust_search.selectAll()
+
+    def focus_discount(self):
+        self.discount_input.setFocus()
+        self.discount_input.selectAll()
 
     def hold_bill(self):
         if not self.cart:
@@ -684,7 +886,85 @@ class MainWindow(QMainWindow):
         self.recent_list.clear()
         bills = BillModel.get_recent_bills()
         for b in bills:
-            self.recent_list.addItem(f"{b['bill_number']} - ₹{b['grand_total']:.2f}")
+            item = QListWidgetItem(f"{b['bill_number']} - ₹{b['grand_total']:.2f}")
+            item.setData(Qt.ItemDataRole.UserRole, b)
+            item.setToolTip("Click to view: Preview Bill, Add More Items, or Close")
+            self.recent_list.addItem(item)
+
+    def on_recent_bill_clicked(self, item):
+        bill_data = item.data(Qt.ItemDataRole.UserRole)
+        if not bill_data:
+            txt = item.text()
+            bnum = txt.split(' - ')[0].strip()
+            bill_data = BillModel.get_bill_by_number(bnum)
+            if not bill_data:
+                return
+
+        items = BillModel.get_bill_items(bill_data['id'])
+        dlg = RecentBillActionDialog(self, bill_data, items)
+        if dlg.exec() and dlg.action_selected == 'add_items':
+            self.load_bill_for_adding_items(bill_data, items)
+
+    def load_bill_for_adding_items(self, bill_data, items):
+        if self.cart:
+            reply = QMessageBox.question(
+                self,
+                "Cart Not Empty",
+                f"The cart currently has {len(self.cart)} item(s).\n\nDo you want to discard the active cart and load items from bill {bill_data['bill_number']} to add more items?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        self.editing_bill_id = bill_data['id']
+        self.editing_bill_number = bill_data['bill_number']
+
+        # Load Customer
+        if bill_data.get('customer_id'):
+            cust = next((c for c in self.customers if c['id'] == bill_data['customer_id']), None)
+            if cust:
+                self.current_customer = cust
+            else:
+                self.current_customer = {
+                    'id': bill_data['customer_id'],
+                    'name': bill_data.get('customer_name') or 'Customer',
+                    'phone': bill_data.get('customer_phone') or ''
+                }
+            self.lbl_cust.setText(f"{self.current_customer['name']} ({self.current_customer['phone']})")
+        else:
+            self.current_customer = None
+            self.lbl_cust.setText("Walk-in Customer")
+
+        # Load items into active cart (shallow-copy items)
+        self.cart = [dict(it) for it in items]
+
+        # Load discount
+        disc_amt = float(bill_data.get('discount_amount', 0.0) or 0.0)
+        if disc_amt > 0:
+            self.discount_type.setCurrentText("₹")
+            self.discount_input.setText(f"{disc_amt:.2f}".rstrip('0').rstrip('.'))
+        else:
+            self.discount_input.setText("0")
+
+        # Show editing banner & update button
+        self.banner_editing.setVisible(True)
+        self.lbl_editing_info.setText(f"✏ Editing Bill: {bill_data['bill_number']} — Add more items, then click Update Bill to finish.")
+        self.btn_print.setText(f"Update Bill ({bill_data['bill_number']}) [F12]")
+
+        self.update_cart_table()
+        self.prod_search.setFocus()
+
+    def cancel_bill_edit(self):
+        reply = QMessageBox.question(
+            self,
+            "Cancel Editing",
+            "Stop adding items to this bill and clear the cart?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.clear_cart()
 
     def search_customer(self):
         query = self.cust_search.text()
@@ -1053,16 +1333,39 @@ class MainWindow(QMainWindow):
         
         self.lbl_subtotal.setText(f"₹{subtotal:.2f}")
         
-        # Calculate Discount
+        # Calculate Discount (Percentage or Fixed Number in Rupees)
+        raw_text = self.discount_input.text().strip() if hasattr(self, 'discount_input') else "0"
+        if raw_text.endswith('%'):
+            if hasattr(self, 'discount_type') and self.discount_type.currentText() != '%':
+                self.discount_type.blockSignals(True)
+                self.discount_type.setCurrentText('%')
+                self.discount_type.blockSignals(False)
+            raw_text = raw_text[:-1].strip()
+        elif raw_text.startswith('₹') or raw_text.lower().startswith('rs'):
+            if hasattr(self, 'discount_type') and self.discount_type.currentText() != '₹':
+                self.discount_type.blockSignals(True)
+                self.discount_type.setCurrentText('₹')
+                self.discount_type.blockSignals(False)
+            raw_text = raw_text.lstrip('₹rsRS').strip()
+
         try:
-            disc_percent = float(self.discount_input.text())
+            disc_val = float(raw_text) if raw_text else 0.0
         except ValueError:
-            disc_percent = 0.0
-            
-        discount_amount = (subtotal * disc_percent) / 100
+            disc_val = 0.0
+
+        if disc_val < 0:
+            disc_val = 0.0
+
+        mode = self.discount_type.currentText() if hasattr(self, 'discount_type') else "%"
+        if mode == "%":
+            disc_val = min(disc_val, 100.0)
+            discount_amount = (subtotal * disc_val) / 100.0
+        else:
+            discount_amount = min(disc_val, subtotal)
+
         self.lbl_discount_amt.setText(f"₹{discount_amount:.2f}")
         
-        grand_total = subtotal - discount_amount
+        grand_total = max(0.0, subtotal - discount_amount)
         self.lbl_grand_total.setText(f"₹{grand_total:.2f}")
         self.table.blockSignals(False)
 
@@ -1095,6 +1398,14 @@ class MainWindow(QMainWindow):
         self.cart = []
         self.current_customer = None
         self.lbl_cust.setText("Walk-in Customer")
+        self.editing_bill_id = None
+        self.editing_bill_number = None
+        if hasattr(self, 'banner_editing'):
+            self.banner_editing.setVisible(False)
+        if hasattr(self, 'btn_print'):
+            self.btn_print.setText("Complete & Print (F12)")
+        if hasattr(self, 'discount_input'):
+            self.discount_input.setText("0")
         self.update_cart_table()
 
     def process_bill(self):
@@ -1105,8 +1416,11 @@ class MainWindow(QMainWindow):
         grand_total = float(self.lbl_grand_total.text().replace('₹', ''))
         dlg = PaymentDialog(self, grand_total)
         if dlg.exec():
+            is_updating = bool(getattr(self, 'editing_bill_id', None))
+            bill_number = self.editing_bill_number if is_updating else generate_bill_number()
+
             bill_data = {
-                'bill_number': generate_bill_number(),
+                'bill_number': bill_number,
                 'customer_id': self.current_customer['id'] if self.current_customer else None,
                 'subtotal': float(self.lbl_subtotal.text().replace('₹', '')),
                 'grand_total': grand_total,
@@ -1118,8 +1432,17 @@ class MainWindow(QMainWindow):
             }
             
             try:
-                # Save to DB
-                BillModel.create_bill(bill_data, self.cart)
+                # Save to DB (update existing bill or create new bill)
+                if is_updating:
+                    BillModel.update_bill(self.editing_bill_id, bill_data, self.cart)
+                    self.editing_bill_id = None
+                    self.editing_bill_number = None
+                    if hasattr(self, 'banner_editing'):
+                        self.banner_editing.setVisible(False)
+                    if hasattr(self, 'btn_print'):
+                        self.btn_print.setText("Complete & Print (F12)")
+                else:
+                    BillModel.create_bill(bill_data, self.cart)
                 
                 # Show Preview & Print
                 preview_dlg = BillPreviewDialog(self, bill_data, self.cart, self.printer_manager)
