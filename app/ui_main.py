@@ -663,15 +663,16 @@ class MainWindow(QMainWindow):
 
         # Cart Table
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["Product", "Qty", "Unit", "Price", "Total", "Action"])
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["Product", "Qty", "Unit", "Price", "Discount", "Total", "Action"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, 65)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(6, 65)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.cellChanged.connect(self.on_cart_item_changed)
@@ -864,6 +865,8 @@ class MainWindow(QMainWindow):
             # Load Items
             items = BillModel.get_bill_items(bill['id'])
             self.cart = items
+            self.discount_type.setCurrentIndex(1)
+            self.discount_input.setText(str(max(0, (bill.get('discount_amount') or 0) - sum(it.get('discount_amount', 0) for it in items))))
             
             # Delete the held bill to avoid dupes logic (as per plan)
             BillModel.delete_bill(bill['id'])
@@ -940,7 +943,7 @@ class MainWindow(QMainWindow):
         self.cart = [dict(it) for it in items]
 
         # Load discount
-        disc_amt = float(bill_data.get('discount_amount', 0.0) or 0.0)
+        disc_amt = max(0, float(bill_data.get('discount_amount', 0.0) or 0.0) - sum(it.get('discount_amount', 0) for it in self.cart))
         if disc_amt > 0:
             self.discount_type.setCurrentText("₹")
             self.discount_input.setText(f"{disc_amt:.2f}".rstrip('0').rstrip('.'))
@@ -1280,7 +1283,12 @@ class MainWindow(QMainWindow):
         self.table.blockSignals(True)
         self.table.setRowCount(len(self.cart))
         subtotal = 0
+        line_discounts = 0
         for row, item in enumerate(self.cart):
+            gross = round(item['quantity'] * item['price'], 2)
+            item['discount_amount'] = min(max(0, item.get('discount_amount', 0)), max(0, gross))
+            item['total'] = round(gross - item['discount_amount'], 2)
+            line_discounts += item['discount_amount']
             # Product Name (Read-only)
             name_item = QTableWidgetItem(item['product_name'])
             name_item.setFlags(name_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
@@ -1295,10 +1303,12 @@ class MainWindow(QMainWindow):
             # Price (Editable)
             self.table.setItem(row, 3, QTableWidgetItem(f"{item['price']:.2f}"))
             
+            self.table.setItem(row, 4, QTableWidgetItem(f"{item['discount_amount']:.2f}"))
+            self.table.item(row, 4).setToolTip("Row discount in rupees or a percentage such as 10%")
             # Total (Read-only)
             total_item = QTableWidgetItem(f"₹{item['total']:.2f}")
             total_item.setFlags(total_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 4, total_item)
+            self.table.setItem(row, 5, total_item)
 
             # Delete Action Button with Trash Icon
             btn_del = QPushButton()
@@ -1327,9 +1337,9 @@ class MainWindow(QMainWindow):
             cell_layout.setContentsMargins(0, 0, 0, 0)
             cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             cell_layout.addWidget(btn_del)
-            self.table.setCellWidget(row, 5, container)
+            self.table.setCellWidget(row, 6, container)
             
-            subtotal += item['total']
+            subtotal += gross
         
         self.lbl_subtotal.setText(f"₹{subtotal:.2f}")
         
@@ -1359,10 +1369,11 @@ class MainWindow(QMainWindow):
         mode = self.discount_type.currentText() if hasattr(self, 'discount_type') else "%"
         if mode == "%":
             disc_val = min(disc_val, 100.0)
-            discount_amount = (subtotal * disc_val) / 100.0
+            discount_amount = ((subtotal - line_discounts) * disc_val) / 100.0
         else:
-            discount_amount = min(disc_val, subtotal)
+            discount_amount = min(disc_val, subtotal - line_discounts)
 
+        discount_amount = round(discount_amount + line_discounts, 2)
         self.lbl_discount_amt.setText(f"₹{discount_amount:.2f}")
         
         grand_total = max(0.0, subtotal - discount_amount)
@@ -1381,6 +1392,17 @@ class MainWindow(QMainWindow):
                 text = self.table.item(row, column).text().replace('₹', '')
                 item['price'] = float(text)
             
+            elif column == 4:
+                from decimal import Decimal, InvalidOperation
+                text = self.table.item(row, column).text().strip()
+                try:
+                    value = Decimal(text.rstrip('%'))
+                except InvalidOperation:
+                    raise ValueError("Invalid discount")
+                if not value.is_finite() or value < 0:
+                    raise ValueError("Invalid discount")
+                gross = Decimal(str(item['quantity'])) * Decimal(str(item['price']))
+                item['discount_amount'] = round(float(gross * min(value, 100) / 100 if text.endswith('%') else min(value, gross)), 2)
             # Recalculate total
             item['total'] = item['quantity'] * item['price']
             self.update_cart_table()
@@ -1435,6 +1457,7 @@ class MainWindow(QMainWindow):
                 # Save to DB (update existing bill or create new bill)
                 if is_updating:
                     BillModel.update_bill(self.editing_bill_id, bill_data, self.cart)
+                    bill_data['date_time'] = BillModel.get_bill_by_id(self.editing_bill_id)['date_time']
                     self.editing_bill_id = None
                     self.editing_bill_number = None
                     if hasattr(self, 'banner_editing'):

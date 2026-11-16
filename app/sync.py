@@ -60,6 +60,15 @@ def ensure_db_columns():
             if 'local_bill_id' not in existing_bill_cols:
                 conn.execute(text("ALTER TABLE bills ADD COLUMN local_bill_id VARCHAR"))
 
+            if 'sync_version' not in existing_bill_cols:
+                conn.execute(text("ALTER TABLE bills ADD COLUMN sync_version INTEGER NOT NULL DEFAULT 1"))
+                # Previously synced bills whose edits were rejected need an update revision.
+                conn.execute(text("UPDATE bills SET sync_version = 2 WHERE synced = 0 AND cloud_order_id IS NOT NULL"))
+
+            item_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(bill_items)")).fetchall()]
+            if 'discount_amount' not in item_cols:
+                conn.execute(text("ALTER TABLE bill_items ADD COLUMN discount_amount FLOAT DEFAULT 0"))
+
             # Ensure product_code_aliases table exists
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS product_code_aliases (
@@ -355,7 +364,8 @@ class ToyPopSyncClient:
         session = get_db()
         try:
             unsynced = session.query(Bill).filter(
-                (Bill.synced == 0) | (Bill.synced == None)
+                (Bill.synced == 0) | (Bill.synced == None),
+                Bill.status == "PAID"
             ).all()
 
             if not unsynced:
@@ -365,6 +375,7 @@ class ToyPopSyncClient:
             errors = []
 
             for bill in unsynced:
+                bill_version = bill.sync_version or 1
                 if bill.customer and (
                     not bill.customer.cloud_id or
                     (bill.customer.synced_version or 0) < (bill.customer.sync_version or 1)
@@ -397,7 +408,7 @@ class ToyPopSyncClient:
                         "quantity": min(int(bi.quantity), 500),
                         "unitPricePaise": int(round(bi.price * 100)),
                         "mrpPaise": int(round(bi.price * 100)),
-                        "discountPaise": 0,
+                        "discountPaise": int(round((bi.discount_amount or 0) * 100)),
                         "gstRateBps": getattr(bi.product, 'gst_rate_bps', 1800) if bi.product else 1800,
                         "hsnCode": (getattr(bi.product, 'hsn_code', None) or "") if bi.product else ""
                     })
@@ -406,7 +417,8 @@ class ToyPopSyncClient:
                 clean_method = "cash" if "cash" in method else ("upi" if "upi" in method else "card")
 
                 payload = {
-                    "localBillId": f"BILL-{bill.id}-{bill.bill_number}",
+                    "localBillId": bill.local_bill_id or f"BILL-{bill.id}-{bill.bill_number}",
+                    "revision": bill_version,
                     "billNumber": bill.bill_number,
                     "terminalId": self.terminal_id,
                     "billedAt": billed_at_iso,
@@ -427,10 +439,16 @@ class ToyPopSyncClient:
 
                 res = self._make_request("/api/pos/orders", method="POST", data=payload)
                 if res.get("status") in (200, 201) and res.get("data", {}).get("success"):
-                    bill.synced = 1
-                    bill.cloud_order_id = res["data"].get("orderId")
-                    bill.local_bill_id = payload["localBillId"]
-                    synced_bills += 1
+                    # A newer local edit made during upload must remain pending.
+                    updated = session.query(Bill).filter(
+                        Bill.id == bill.id, Bill.sync_version == bill_version,
+                        Bill.status == 'PAID'
+                    ).update({
+                        Bill.synced: 1,
+                        Bill.cloud_order_id: res["data"].get("orderId"),
+                        Bill.local_bill_id: payload["localBillId"],
+                    }, synchronize_session=False)
+                    synced_bills += updated
                 else:
                     err_msg = res.get("error", "Unknown ingestion error")
                     errors.append(f"Bill {bill.bill_number}: {err_msg}")

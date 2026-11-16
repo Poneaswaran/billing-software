@@ -78,6 +78,7 @@ class Bill(Base):
     synced = Column(Integer, default=0, index=True)
     cloud_order_id = Column(String, nullable=True)
     local_bill_id = Column(String, nullable=True)
+    sync_version = Column(Integer, default=1, nullable=False)
     
     customer = relationship("Customer")
     items = relationship("BillItem", back_populates="bill", cascade="all, delete-orphan")
@@ -98,6 +99,7 @@ class Bill(Base):
             'synced': self.synced or 0,
             'cloud_order_id': self.cloud_order_id,
             'local_bill_id': self.local_bill_id,
+            'sync_version': self.sync_version or 1,
             'customer_name': self.customer.name if self.customer else None,
             'customer_phone': self.customer.phone if self.customer else None
         }
@@ -113,6 +115,7 @@ class BillItem(Base):
     unit = Column(String, nullable=False)
     price = Column(Float, nullable=False)
     total = Column(Float, nullable=False)
+    discount_amount = Column(Float, default=0)
     
     bill = relationship("Bill", back_populates="items")
     product = relationship("Product")

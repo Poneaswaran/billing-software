@@ -229,6 +229,7 @@ class BillModel:
                     quantity=item['quantity'],
                     unit=item['unit'],
                     price=item['price'],
+                    discount_amount=item.get('discount_amount', 0),
                     total=item['total']
                 )
                 session.add(bill_item)
@@ -274,8 +275,8 @@ class BillModel:
             bill.grand_total = bill_data['grand_total']
             if bill_data.get('payment_method'):
                 bill.payment_method = bill_data['payment_method']
-            if bill_data.get('date_time'):
-                bill.date_time = bill_data['date_time']
+            # Editing a sale keeps its original date and durable cloud identity.
+            bill.sync_version = (bill.sync_version or 1) + 1
             bill.synced = 0
 
             # Delete old items and insert updated items
@@ -288,6 +289,7 @@ class BillModel:
                     quantity=item['quantity'],
                     unit=item['unit'],
                     price=item['price'],
+                    discount_amount=item.get('discount_amount', 0),
                     total=item['total']
                 )
                 session.add(bill_item)
@@ -485,6 +487,7 @@ class BillModel:
                     quantity=item['quantity'],
                     unit=item['unit'],
                     price=item['price'],
+                    discount_amount=item.get('discount_amount', 0),
                     total=item['total']
                 )
                 session.add(bill_item)
@@ -520,6 +523,7 @@ class BillModel:
                 'quantity': i.quantity,
                 'unit': i.unit,
                 'price': i.price,
+                'discount_amount': i.discount_amount or 0,
                 'total': i.total
             } for i in items]
         finally:
